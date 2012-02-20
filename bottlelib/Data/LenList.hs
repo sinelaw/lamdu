@@ -1,61 +1,48 @@
-{-# LANGUAGE
-  DeriveFunctor, KindSignatures,
-  FlexibleInstances, FlexibleContexts,
-  OverlappingInstances #-}
+{-# LANGUAGE GADTs #-}
 -- TODO: Just use HList with a class that implements a constraint that
 -- it is homogenous after all? We just need the length encoded in the
 -- type
-module Data.LenList(ZeroL(..), SuccL(..), (.*.), nil) where
+module Data.LenList(
+  LenList(..),
+  head, tail, init, last,
+  lengthNat, length
+) where
 
-import Prelude ((.), Show(..), Read, Eq, Ord, Functor)
+import qualified TypeLevel.NaturalNumber as Nat
+import Prelude hiding (head, tail, init, last, length)
 import qualified Prelude as P
-import Data.Monoid(mconcat)
 
-data ZeroL a = ZeroL
-  deriving (Show, Read, Eq, Ord, Functor)
+data LenList n a where
+  Empty :: LenList Nat.Zero a
+  Cons :: a -> LenList n a -> LenList (Nat.SuccessorTo n) a
 
-data SuccL l a = SuccL {
-  succHead :: a,
-  succTail :: (l a)
-} deriving (Read, Eq, Ord, Functor)
+data Fin n where
+  FinZero :: Fin (Nat.SuccessorTo n)
+  FinSucc :: Fin n -> Fin (Nat.SuccessorTo n)
 
-instance (Show (l a), Show a) => Show (SuccL l a) where
-  show (SuccL h t) =
-    mconcat ["SuccL (", show h, ") (", show t, ")"]
+lengthNat :: LenList n a -> n
+lengthNat = undefined
 
-class LenList (l :: * -> *)
-instance LenList ZeroL
-instance LenList l => LenList (SuccL l)
+length :: Nat.NaturalNumber n => LenList n a -> Int
+length = Nat.naturalNumberAsInt . lengthNat
 
-infixr 5 .*.
-(.*.) :: (LenList l1) => a -> l1 a -> (SuccL l1) a
-(.*.) = SuccL
+toList :: LenList n a -> [a]
+toList Empty = []
+toList (Cons x xs) = x : toList xs
 
-nil :: ZeroL a
-nil = ZeroL
+instance Show a => Show (LenList n a) where
+  show = show . toList
 
-class Head l where
-  head :: l a -> a
-instance Head (SuccL l) where
-  head = succHead
+head :: LenList (Nat.SuccessorTo n) a -> a
+head (Cons x _) = x
 
-class Tail l where
-  tail :: SuccL l a -> l a
-instance Tail (SuccL l) where
-  tail = succTail
+tail :: LenList (Nat.SuccessorTo n) a -> LenList n a
+tail (Cons _ xs) = xs
 
-class Last l where
-  last :: l a -> a
-instance Last (SuccL ZeroL) where
-  last = succHead
-instance Last l => Last (SuccL l) where
-  last = last . succTail
+last :: LenList (Nat.SuccessorTo n) a -> a
+last (Cons x Empty) = x
+last (Cons _ xs@(Cons _ _)) = last xs
 
-class ToList l where
-  toList :: l a -> [a]
-
-instance ToList ZeroL where
-  toList ZeroL = []
-
-instance ToList l => ToList (SuccL l) where
-  toList (SuccL h t) = h : toList t
+init :: LenList (Nat.SuccessorTo n) a -> LenList n a
+init (Cons _ Empty) = Empty
+init (Cons x xs@(Cons _ _)) = Cons x (init xs)

@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TemplateHaskell, GADTs #-}
 module Graphics.UI.Bottle.Widgets.Grid(
   Grid, KGrid(..), make, makeKeyed, unkey, getElement,
   atGridMCursor,
@@ -12,8 +12,8 @@ where
 import Control.Applicative (liftA2)
 import Control.Arrow (second)
 import Control.Monad (msum, (>=>))
+import Data.LenList (LenList)
 import Data.List (foldl', transpose, find, minimumBy)
-import Data.List.Utils (index, enumerate2d)
 import Data.Maybe (isJust, fromMaybe, mapMaybe, catMaybes)
 import Data.Monoid (mempty, mconcat)
 import Data.Ord (comparing)
@@ -23,6 +23,7 @@ import Graphics.UI.Bottle.SizeRange (Size)
 import Graphics.UI.Bottle.Sized (Sized(..))
 import Graphics.UI.Bottle.Widget (Widget(..), UserIO(..))
 import qualified Data.AtFieldTH as AtFieldTH
+import qualified Data.LenList as LenList
 import qualified Graphics.UI.Bottle.Direction as Direction
 import qualified Graphics.UI.Bottle.EventMap as EventMap
 import qualified Graphics.UI.Bottle.Rect as Rect
@@ -30,16 +31,19 @@ import qualified Graphics.UI.Bottle.Sized as Sized
 import qualified Graphics.UI.Bottle.Widget as Widget
 import qualified Graphics.UI.Bottle.Widgets.GridView as GridView
 import qualified Graphics.UI.GLFW as GLFW
+import qualified TypeLevel.NaturalNumber as Nat
 
 type Cursor = Vector2 Int
 
-length2d :: [[a]] -> Vector2 Int
-length2d xs = Vector2 (foldl' max 0 . map length $ xs) (length xs)
+length2d :: LenList y (LenList x a) -> Vector2 Int
+length2d LenList.Empty = Vector2 0 0
+length2d y@(LenList.Cons x _) =
+  Vector2 (LenList.length x) (LenList.length y)
 
 capCursor :: Vector2 Int -> Vector2 Int -> Vector2 Int
 capCursor size = fmap (max 0) . liftA2 min (fmap (subtract 1) size)
 
-mkNavEventmap :: [[Widget.MEnter f]] -> Size -> Rect -> Cursor -> (Widget.EventHandlers f, Widget.EventHandlers f)
+mkNavEventmap :: LenList y (LenList x (Widget.MEnter f)) -> Size -> Rect -> Cursor -> (Widget.EventHandlers f, Widget.EventHandlers f)
 mkNavEventmap mEnterChildren widgetSize curRect cursor@(Vector2 cursorX cursorY) = (weakMap, strongMap)
   where
     weakMap = mconcat . catMaybes $ [
