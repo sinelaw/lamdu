@@ -5,7 +5,7 @@
 -- TODO: Just use HList with a class that implements a constraint that
 -- it is homogenous after all? We just need the length encoded in the
 -- type
-module Data.LenList where
+module Data.LenList(ZeroL(..), SuccL(..), (.*.), nil) where
 
 import Prelude ((.), Show(..), Read, Eq, Ord, Functor)
 import qualified Prelude as P
