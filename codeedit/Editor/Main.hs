@@ -95,7 +95,7 @@ mainLoopDebugMode font makeWidget addHelp = do
         whenApply isDebugMode (Widget.atImage (addAnnotations font)) $
         Widget.strongerEvents (Widget.keysEventMap Config.debugModeKeys doc set) widget
     makeDebugModeWidget = addHelp =<< addDebugMode =<< makeWidget
-  mainLoopWidget makeDebugModeWidget getAnimHalfLife
+  mainLoopWidget font makeDebugModeWidget getAnimHalfLife
 
 runDbStore :: Draw.Font -> Transaction.Store DBTag IO -> IO a
 runDbStore font store = do
