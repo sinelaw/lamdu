@@ -24,6 +24,8 @@ import Graphics.UI.Bottle.SizeRange (Size)
 import Graphics.UI.Bottle.Sized (Sized(..))
 import Graphics.UI.Bottle.Widget (Widget(..), SizeDependentWidgetData(..))
 import qualified Data.AtFieldTH as AtFieldTH
+import qualified Graphics.DrawingCombinators as Draw
+import qualified Graphics.UI.Bottle.Animation as Anim
 import qualified Graphics.UI.Bottle.Direction as Direction
 import qualified Graphics.UI.Bottle.EventMap as EventMap
 import qualified Graphics.UI.Bottle.Rect as Rect
@@ -155,6 +157,27 @@ getElement key =
 make :: [[Widget f]] -> Grid f
 make = makeKeyed . unkey
 
+coloredRectFrame :: Anim.AnimId -> Draw.Color -> Rect -> Anim.Frame
+coloredRectFrame animId color rect =
+  Anim.onDepth (+100) .
+  Anim.translate (Rect.rectTopLeft rect) .
+  Anim.scale (Rect.rectSize rect) .
+  Anim.onImages (Draw.tint color) $
+  Anim.unitSquare animId
+
+highlightNavDests
+  :: Anim.AnimId -> NavDests f -> Anim.Frame -> Anim.Frame
+highlightNavDests animId navDests =
+  toHighlighter "leftOfCursor" (leftOfCursor navDests) .
+  toHighlighter "aboveCursor" (aboveCursor navDests) .
+  toHighlighter "rightOfCursor" (rightOfCursor navDests) .
+  toHighlighter "belowCursor" (belowCursor navDests)
+  where
+    toHighlighter suffix =
+      maybe id
+      (Anim.weaker . coloredRectFrame (mappend animId [suffix]) ({- TODO: Parameter -} Draw.Color 0 0.05 0.2 1) .
+       Widget.enterResultRect)
+
 helper ::
   (Size -> [[Widget.MEnter f]] -> Widget.MEnter f) ->
   KGrid key f -> Widget f
@@ -183,7 +206,7 @@ helper combineEnters (KGrid mCursor sChildren) =
           }
 
         makeSizeDependentWidgetData cursor@(Vector2 x y) = SizeDependentWidgetData
-          { sdwdFrame = frame
+          { sdwdFrame = highlightNavDests {-TODO: use parameter-}["gridNavBackground"] navDests frame
           , sdwdMaybeEnter = Nothing -- We're already entered
           , sdwdEventMap = makeEventMap sdwd navDests
           , sdwdFocalArea = sdwdFocalArea sdwd
