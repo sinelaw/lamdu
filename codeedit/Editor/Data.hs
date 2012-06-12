@@ -99,12 +99,18 @@ type DefinitionIRef = IRef DefinitionI
 
 newtype PureGuidExpression = PureGuidExpression
   { unPureGuidExpression :: GuidExpression PureGuidExpression
-  } deriving (Show, Eq)
+  } deriving (Eq)
+
+instance Show PureGuidExpression where
+  show = show . unPureGuidExpression
 
 data GuidExpression ref = GuidExpression
   { geGuid :: Guid
   , geValue :: Expression ref
-  } deriving (Show, Eq)
+  } deriving (Eq)
+
+instance Show ref => Show (GuidExpression ref) where
+  show (GuidExpression guid value) = show value ++ ":" ++ show guid
 
 AtFieldTH.make ''PureGuidExpression
 AtFieldTH.make ''GuidExpression

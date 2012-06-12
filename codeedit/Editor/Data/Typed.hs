@@ -23,13 +23,15 @@ import Control.Monad.Trans.Class (MonadTrans(..))
 import Control.Monad.Trans.Random (nextRandom, runRandomT)
 import Control.Monad.Trans.Reader (ReaderT, runReaderT)
 import Control.Monad.Trans.State (execStateT)
-import Control.Monad.Trans.UnionFind (UnionFindT, evalUnionFindT)
+import Control.Monad.Trans.UnionFind (UnionFindT, runUnionFindT)
 import Data.Functor.Identity (Identity(..))
 import Data.Map (Map)
 import Data.Maybe (fromMaybe)
 import Data.Monoid (Any(..), mconcat)
 import Data.Store.Guid (Guid)
 import Data.Store.Transaction (Transaction)
+import Data.UnionFind.IntMap (prettyUF)
+import Debug.TraceUtils
 import Editor.Anchors (ViewTag)
 import Editor.Data.Load (StoredExpressionRef(..), esGuid)
 import qualified Control.Monad.Trans.List.Funcs as ListFuncs
@@ -58,7 +60,9 @@ eeGuid = esGuid . eeStored
 
 newtype TypeData = TypeData
   { unTypeData :: [Data.GuidExpression TypeRef]
-  } deriving (Show)
+  }
+instance Show TypeData where
+  show = show . unTypeData
 type TypeRef = UnionFind.Point TypeData
 
 data StoredExpression it m = StoredExpression
@@ -66,6 +70,10 @@ data StoredExpression it m = StoredExpression
   , eeInferredType :: it
   , eeValue :: Data.Expression (StoredExpression it m)
   } deriving (Eq)
+
+instance Show it => Show (StoredExpression it m) where
+  show (StoredExpression _ it value) =
+    unwords ["(", show value, ":", show it, ")"]
 
 data InferredTypeLoop
   = InferredTypeNoLoop (Data.GuidExpression InferredTypeLoop)
@@ -114,15 +122,19 @@ getTypeRef :: Monad m => TypeRef -> Infer m [Data.GuidExpression TypeRef]
 getTypeRef = liftM unTypeData . liftTypeRef . UnionFind.descr
 
 setTypeRef :: Monad m => TypeRef -> [Data.GuidExpression TypeRef] -> Infer m ()
-setTypeRef typeRef types =
+setTypeRef typeRef types = do
+  tracePutStrLn $ unwords ["Setting", show typeRef, "to", show types]
   liftTypeRef . UnionFind.setDescr typeRef $
-  TypeData types
+    TypeData types
 
 runInfer
   :: Monad m
   => Infer m (TypedStoredExpression f)
   -> T m (TypedStoredExpression f)
-runInfer = liftM canonizeIdentifiersTypes . evalUnionFindT . unInfer
+runInfer =
+  liftM canonizeIdentifiersTypes .
+  liftM (\(uf, x) -> flip trace x $ prettyUF uf) .
+  runUnionFindT . unInfer
 
 makeSingletonTypeRef :: Monad m => Guid -> Data.Expression TypeRef -> Infer m TypeRef
 makeSingletonTypeRef guid = makeTypeRef . (: []) . Data.GuidExpression guid
@@ -309,6 +321,7 @@ unifyOnTree = (`runReaderT` []) . go
       case value of
         Data.ExpressionLambda (Data.Lambda paramType body) -> do
           paramTypeRef <- lift $ typeRefFromStored paramType
+          tracePutStrLn $ unwords ["Stored:Lambda :", show typeRef, "(", show paramTypeRef, "->", show (eeInferredType body), ")"]
           -- We use "flip unify typeRef" so that the new Pi will be
           -- the official Pi guid due to the "left-bias" in
           -- unify/unifyPair. Thus we can later assume that we got the
@@ -319,10 +332,12 @@ unifyOnTree = (`runReaderT` []) . go
               eeInferredType body
           Reader.local ((esGuid stored, paramTypeRef):) $ go body
         Data.ExpressionPi (Data.Lambda paramType resultType) -> do
+          tracePutStrLn $ unwords ["Stored:Pi :", show typeRef]
           paramTypeRef <- lift $ typeRefFromStored paramType
           lift . setType $ eeInferredType resultType
           Reader.local ((esGuid stored, paramTypeRef):) $ go resultType
         Data.ExpressionApply (Data.Apply func arg) -> do
+          tracePutStrLn $ unwords ["Stored:Apply :", show typeRef]
           go func
           go arg
           lift $ do
@@ -343,6 +358,7 @@ unifyOnTree = (`runReaderT` []) . go
                 <- funcTypes
               ]
         Data.ExpressionGetVariable (Data.ParameterRef guid) -> do
+          tracePutStrLn $ unwords ["Stored:GetVar", show guid, ":", show typeRef]
           mParamTypeRef <- Reader.asks $ lookup guid
           lift $ case mParamTypeRef of
             -- TODO: Not in scope: Bad code,
@@ -350,15 +366,17 @@ unifyOnTree = (`runReaderT` []) . go
             Nothing -> return ()
             Just paramTypeRef -> setType paramTypeRef
         Data.ExpressionGetVariable (Data.DefinitionRef defI) -> lift $ do
+          tracePutStrLn $ unwords ["Stored:GetVar", show defI, ":", show typeRef]
           defTypeStored <-
             liftM (storedFromLoaded [] . Data.defType . DataLoad.defEntityValue) .
             liftTransaction $
             DataLoad.loadDefinition defI
           defTypeRef <- typeRefFromStored $ ignoreStoredMonad defTypeStored
           setType defTypeRef
-        Data.ExpressionLiteralInteger _ ->
+        Data.ExpressionLiteralInteger _ -> do
+          tracePutStrLn $ unwords ["Stored:LiteralInt:", show typeRef]
           lift $
-          setType <=< makeSingletonTypeRef zeroGuid . Data.ExpressionBuiltin $ Data.FFIName ["Prelude"] "Integer"
+            setType <=< makeSingletonTypeRef zeroGuid . Data.ExpressionBuiltin $ Data.FFIName ["Prelude"] "Integer"
         _ -> return ()
       where
         makePi guid = makeSingletonTypeRef guid . Data.ExpressionPi
@@ -374,7 +392,12 @@ unify a b = do
   unless e $ do
     as <- getTypeRef a
     bs <- getTypeRef b
+    tracePutStrLn $
+      unwords ["Unifying", show a, show as, "and",
+               show b, show bs]
     result <- liftM (as ++) $ filterM (liftM not . matches as) bs
+    tracePutStrLn $
+      unwords ["Result of", show a, "+", show b, "is", show result]
     liftTypeRef $ do
       a `UnionFind.union` b
       UnionFind.setDescr a $ TypeData result
@@ -422,6 +445,8 @@ unifyPair
         mkGetAGuidRef =
           makeSingletonTypeRef zeroGuid . Data.ExpressionGetVariable $
           Data.ParameterRef aGuid
+      tracePutStrLn $
+        unwords ["Subst of", show bGuid, "to", show aGuid, "in", show bResultTypeRef]
       subst bGuid mkGetAGuidRef bResultTypeRef
       unify aResultTypeRef bResultTypeRef
       return True
@@ -512,6 +537,7 @@ inferExpression
  => StoredExpression TypeRef f
  -> Infer m (TypedStoredExpression f)
 inferExpression withTypeRefs = do
+  tracePutStrLn $ "Top-level type is " ++ show (eeInferredType withTypeRefs)
   unifyOnTree withTypeRefs
   builtinsMap <- liftTransaction $ Property.get Anchors.builtinsMap
   derefed <- derefTypeRefs withTypeRefs
