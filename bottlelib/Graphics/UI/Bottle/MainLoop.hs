@@ -1,10 +1,13 @@
+{-# LANGUAGE TemplateHaskell #-}
 module Graphics.UI.Bottle.MainLoop (mainLoopAnim, mainLoopImage, mainLoopWidget) where
 
+import Control.Applicative (liftA2)
 import Control.Arrow(first, second, (&&&), (***))
 import Control.Concurrent(threadDelay)
 import Control.Concurrent.MVar
 import Control.Monad (liftM)
 import Data.IORef
+import Data.List (genericLength)
 import Data.Monoid (mappend)
 import Data.StateVar (($=))
 import Data.Time.Clock (NominalDiffTime, getCurrentTime, diffUTCTime)
@@ -24,6 +27,7 @@ import qualified Graphics.UI.Bottle.Animation as Anim
 import qualified Graphics.UI.Bottle.EventMap as E
 import qualified Graphics.UI.Bottle.Widget as Widget
 import qualified Graphics.UI.GLFW.Utils as GLFWUtils
+import Text.Printf.Mauke.TH
 
 timeBetweenInvocations ::
   IO ((Maybe NominalDiffTime -> IO a) -> IO a)
@@ -39,10 +43,18 @@ timeBetweenInvocations = do
       result <- f mTimeSince
       return (Just currentTime, result)
 
+averager :: Fractional a => Int -> IO (a -> IO a)
+averager n = do
+  fifo <- newIORef []
+  return $ \added -> do
+      modifyIORef fifo ((added:) . drop n)
+      fmap (liftA2 (/) sum genericLength) $ readIORef fifo
+
 mainLoopImage ::
   Draw.Font -> (Size -> Event -> IO Bool) ->
   (Bool -> Size -> IO (Maybe Image)) -> IO a
 mainLoopImage fpsFont eventHandler makeImage = GLFWUtils.withGLFW $ do
+  avg <- averager 6000
   addDelayArg <- timeBetweenInvocations
   GLFWUtils.openWindow defaultDisplayOptions
 
@@ -64,11 +76,14 @@ mainLoopImage fpsFont eventHandler makeImage = GLFWUtils.withGLFW $ do
       (Vector2.uncurry (,) (ratio * (winSize - size))) %% image
     addDelayToImage winSize mkMImage = addDelayArg $ \mTimeSince -> do
       mImage <- mkMImage
+      mAvgTimeSince <- case mTimeSince of
+        Nothing -> return Nothing
+        Just timeSince -> fmap Just $ avg timeSince
       return $
         fmap
           (mappend . placeAt winSize (Vector2 1 0) . scale 20 20 .
-           useFont . maybe "N/A" (show . (1/)) $
-           mTimeSince)
+           useFont . maybe "N/A" ($(printf "%02.02f") . (1/)) $
+           mAvgTimeSince)
           mImage
 
     handleEvents events = do
