@@ -110,7 +110,7 @@ expressionEventMap holePicker actions =
     , cut
     ]
   where
-    itrans = liftM WidgetIds.fromGuid . IT.transaction
+    itrans = liftM diveGuid . IT.transaction
     giveAsArg =
       moveUnlessOnHole .
       Widget.keysEventMapMovesCursor

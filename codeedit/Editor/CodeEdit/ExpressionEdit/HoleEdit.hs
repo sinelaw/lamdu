@@ -355,5 +355,5 @@ make
      (Maybe (ResultPicker m), WidgetT ViewTag m)
 make hole =
   (fmap . liftM . second . Widget.weakerEvents) (pasteEventMap hole) .
-  BWidgets.wrapDelegated holeFDConfig FocusDelegator.Delegating
+  BWidgets.wrapDelegated holeFDConfig FocusDelegator.NotDelegating
   second . makeH hole
