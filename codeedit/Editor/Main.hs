@@ -172,10 +172,10 @@ runDbStore font store = do
 
   mainLoopDebugMode font makeWidget addHelp
   where
-    dbToIO = Transaction.run store
+    dbToIO = Transaction.run_ store
     viewToDb act = do
       view <- Anchors.getP Anchors.view
-      Transaction.run (Anchors.viewStore view) act
+      Transaction.run_ (Anchors.viewStore view) act
 
 type SugarCache = CodeEdit.SugarCache (Transaction DBTag IO)
 

@@ -90,7 +90,7 @@ viewToDb
   :: Monad m => View
   -> Transaction ViewTag (Transaction DBTag m) a
   -> Transaction DBTag m a
-viewToDb = Transaction.run . Anchors.viewStore
+viewToDb = Transaction.run_ . Anchors.viewStore
 
 type CachedITrans t versionCache m =
   WriterT (Last versionCache) (ITransaction t m)

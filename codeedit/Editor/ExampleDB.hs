@@ -125,7 +125,7 @@ setMkProp mkProp val = do
 
 initDB :: Store DBTag IO -> IO ()
 initDB store =
-  Transaction.run store $ do
+  Transaction.run_ store $ do
     bs <- initRef A.branchesIRef $ do
       masterNameIRef <- Transaction.newIRef "master"
       changes <- collectWrites Transaction.newKey $ do
@@ -146,7 +146,8 @@ initDB store =
     view <- initRef A.viewIRef $ View.new branch
     _ <- initRef A.currentBranchIRef (return branch)
     _ <- initRef A.redosIRef $ return []
-    _ <- initRef A.cursorIRef . Transaction.run (View.store view) $ do
+    _ <-
+      initRef A.cursorIRef . Transaction.run_ (View.store view) $ do
       (defI : _) <- A.getP A.panes
       return $ WidgetIds.fromIRef defI
     return ()
