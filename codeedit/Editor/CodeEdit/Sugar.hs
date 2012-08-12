@@ -503,8 +503,9 @@ setAddArg exprI =
 atFunctionType :: ExpressionRef m -> ExpressionRef m
 atFunctionType exprRef =
   case rExpression exprRef of
-    ExpressionHole {} -> exprRef -- Keep types on holes
-    _ -> atRInferredTypes removeIfOnlyPis exprRef
+    _ -> exprRef
+    -- ExpressionHole {} -> exprRef -- Keep types on holes
+    -- _ -> atRInferredTypes removeIfOnlyPis exprRef
   where
     removeIfOnlyPis xs
       | all (isPi . rExpression) xs = []
