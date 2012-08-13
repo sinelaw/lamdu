@@ -42,7 +42,11 @@ make makeExpressionEdit (Sugar.Pi param resultType) myId =
         OT.setTextSizeColor Config.rightArrowTextSize Config.rightArrowColor .
         BWidgets.makeLabel "→" $ Widget.toAnimId myId
       return $
-        ExpressionGui.hboxSpaced [paramEdit, ExpressionGui.fromValueWidget rightArrowLabel, resultTypeEdit]
+        ExpressionGui.hboxSpaced
+        [ ExpressionGui.fromValueWidget (ExpressionGui.egWidget paramEdit)
+        , ExpressionGui.fromValueWidget rightArrowLabel
+        , resultTypeEdit
+        ]
   where
     paramGuid = Sugar.fpGuid param
     paramId = WidgetIds.fromGuid paramGuid

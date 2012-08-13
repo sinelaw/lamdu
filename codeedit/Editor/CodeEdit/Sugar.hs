@@ -63,6 +63,7 @@ data HasParens = HaveParens | DontHaveParens
 
 data ExpressionRef m = ExpressionRef
   { rExpression :: Expression m
+  , rInferredValues :: [ExpressionRef m]
   , rInferredTypes :: [ExpressionRef m]
   , rGuid :: Guid
   , rActions :: Maybe (Actions m)
@@ -317,26 +318,31 @@ derefRef = do
   let f def gen = DataTyped.derefRef gen builtinsMap $ DataTyped.deTypeContext def
   return $ maybe ((const . const) []) f mDefinition
 
+guidGen :: Int -> Int -> Guid -> Random.StdGen
+guidGen a b = Random.mkStdGen . (+a) . (*b) . BinaryUtils.decodeS . Guid.bs
+
+zeroGen :: Random.StdGen
+zeroGen = Random.mkStdGen 0
+
 mkExpressionRef
   :: Monad m
   => ExprEntity m
   -> Expression m -> Sugar m (ExpressionRef m)
 mkExpressionRef ee expr = do
   deref <- derefRef
-  let types = maybe [] (deref gen . eeInferredTypes) $ eeStored ee
-  inferredTypesRefs <-
-    mapM (convertExpressionI . eeFromITL) types
+  let get gen f = maybe [] (deref (gen guid) . f) $ eeStored ee
+  inferredValues <- mapM (convertExpressionI . eeFromITL) $ get (guidGen 0 3) eeInferredValues
+  inferredTypes <- mapM (convertExpressionI . eeFromITL) $ get (guidGen 1 3) eeInferredTypes
   return
     ExpressionRef
     { rExpression = expr
-    , rInferredTypes = inferredTypesRefs
+    , rInferredValues = inferredValues
+    , rInferredTypes = inferredTypes
     , rGuid = eeGuid ee
     , rActions = fmap mkActions $ eeProp ee
     }
   where
-    gen =
-      Random.mkStdGen . (*2) . BinaryUtils.decodeS . Guid.bs $
-      eeGuid ee
+    guid = eeGuid ee
 
 mkDelete
   :: Monad m
@@ -698,7 +704,7 @@ inferResults builtinsMap scope mDef holeStored expr = List.joinL $ do
       let
         derefIt =
           fromInferred .
-          DataTyped.derefRef (Random.mkStdGen 0) builtinsMap
+          DataTyped.derefRef zeroGen builtinsMap
           newTypeContext
       return (derefIt, x)
 
@@ -712,9 +718,7 @@ convertHole exprI = do
   let
     maybeInferredValues =
       map DataTyped.pureGuidFromLoop .
-      maybe [] (deref gen . eeInferredValues) $ eeStored exprI
-    gen =
-      Random.mkStdGen . (+1) . (*2) . BinaryUtils.decodeS $ Guid.bs eGuid
+      maybe [] (deref (guidGen 2 3 eGuid) . eeInferredValues) $ eeStored exprI
     hole = Hole
       { holeScope =
         map (lambdaGuidToParamGuid &&& Data.ParameterRef) $
@@ -830,9 +834,7 @@ convertDefinitionI (DataTyped.StoredDefinition defI defInferredType (Data.Defini
     , drMNewType = defNewType
     }
   where
-    gen =
-      Random.mkStdGen . BinaryUtils.decodeS . Guid.bs $
-      IRef.guid defI
+    gen = guidGen 0 1 $ IRef.guid defI
     bodyEntity = eeFromTypedExpression bodyI
     toMaybeT = MaybeT . return
     defGuid = IRef.guid defI

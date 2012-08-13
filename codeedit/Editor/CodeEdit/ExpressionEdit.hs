@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Editor.CodeEdit.ExpressionEdit(make) where
 
+import Control.Applicative (liftA2)
 import Control.Arrow (first, second)
 import Control.Monad (liftM)
 import Data.Monoid (Monoid(..))
@@ -10,6 +11,8 @@ import Editor.ITransaction (ITransaction)
 import Editor.MonadF (MonadF)
 import Editor.OTransaction (OTransaction)
 import Graphics.UI.Bottle.Widget (EventHandlers)
+import qualified Control.Lens as Lens
+import qualified Data.Vector.Vector2 as Vector2
 import qualified Editor.BottleWidgets as BWidgets
 import qualified Editor.CodeEdit.ExpressionEdit.ApplyEdit as ApplyEdit
 import qualified Editor.CodeEdit.ExpressionEdit.BuiltinEdit as BuiltinEdit
@@ -27,9 +30,11 @@ import qualified Editor.CodeEdit.Sugar as Sugar
 import qualified Editor.Config as Config
 import qualified Editor.ITransaction as IT
 import qualified Editor.WidgetIds as WidgetIds
+import qualified Graphics.DrawingCombinators as Draw
 import qualified Graphics.UI.Bottle.EventMap as E
 import qualified Graphics.UI.Bottle.Widget as Widget
 import qualified Graphics.UI.Bottle.Widgets.FocusDelegator as FocusDelegator
+import qualified Graphics.UI.Bottle.Widgets.Spacer as Spacer
 
 data HoleResultPicker m = NotAHole | IsAHole (Maybe (HoleEdit.ResultPicker m))
 foldHolePicker
@@ -69,10 +74,33 @@ make :: MonadF m => ExpressionGui.Maker m
 make sExpr = do
   (holePicker, widget) <- makeEditor sExpr exprId
   typeEdits <- mapM make $ Sugar.rInferredTypes sExpr
+  addInferredValues <-
+    if null (Sugar.rInferredValues sExpr)
+    then return id
+    else do
+      inferredValuesEdits <- mapM make $ Sugar.rInferredValues sExpr
+      let
+        inferredValuesEdit =
+          -- Parens.addSquareParens (Widget.toAnimId exprId) .
+          Widget.tint (Draw.Color 0.7 0.7 1 1) .
+          BWidgets.vboxCentered . map ExpressionGui.egWidget $
+          inferredValuesEdits
+      return $ \w ->
+        let
+          horizLineSize =
+            Lens.set Vector2.second 1 $
+            liftA2 max (Widget.wSize w) (Widget.wSize inferredValuesEdit)
+        in
+         BWidgets.vboxCentered
+         [ inferredValuesEdit
+         , Spacer.makeHorizLine horizLineId horizLineSize
+         , w
+         ]
   let onReadOnly = Widget.doesntTakeFocus
   return .
     ExpressionGui.atEgWidget
-    ( maybe onReadOnly
+    ( addInferredValues
+    . maybe onReadOnly
       (Widget.weakerEvents . expressionEventMap holePicker)
       (Sugar.rActions sExpr)
     ) .
@@ -84,6 +112,7 @@ make sExpr = do
       ) typeEdits) $
     widget
   where
+    horizLineId = Widget.toAnimId exprId ++ ["horizLine"]
     exprId = WidgetIds.fromGuid $ Sugar.rGuid sExpr
 
 makeEditor
