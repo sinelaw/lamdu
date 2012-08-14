@@ -99,6 +99,7 @@ data Constraints = Constraints
   { tcLambdaGuids :: Set Guid
   , tcExprs :: [Data.Expression FatRef]
   , tcRules :: [UnifyRule]
+  , tcDests :: [Ref]
   }
 
 instance Show Constraints where
@@ -516,6 +517,13 @@ unify a b = do
 lookupDefToKey :: Ord k => k -> Map k k -> k
 lookupDefToKey key = fromMaybe key . Map.lookup key
 
+copyToDest :: Ref -> Data.Expression FatRef -> Infer m ()
+copyToDest ref Data.ExpressionLambda (Data.Lambda paramType result) =
+copyToDest ref Data.ExpressionPi (Data.Lambda paramType resultType) =
+copyToDest ref Data.ExpressionApply (Data.Apply func arg) =
+copyToDest ref other = ...
+
+
 unifyConstraints
   :: Monad m => Map Guid Guid -> Ref -> Constraints -> Constraints -> (Constraints, Infer m ())
 unifyConstraints paramGuidMapping exprRef aConstraints bConstraints =
@@ -528,10 +536,15 @@ unifyConstraints paramGuidMapping exprRef aConstraints bConstraints =
       , tcLambdaGuids = on Set.union tcLambdaGuids aConstraints bConstraints
       }
     postAction = do
+      copyToDests aConstraints $ tcDests bConstraints
+      copyToDests bConstraints $ tcDests aConstraints
       when isNewConflict $ onConflict =<< getActions
       applyRulesRef aConstraints bConstraints
       applyRulesRef bConstraints aConstraints
       recursivePostAction
+    copyToDests constraints destRefs =
+      sequence_ . liftA2 copyToDest destRefs $ tcExprs constraints
+      
     (newExprs, isNewConflict, recursivePostAction) =
       go aExprs (tcExprs bConstraints)
     go [] exprs = (exprs, False, return ())
