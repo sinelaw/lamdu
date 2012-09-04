@@ -70,6 +70,7 @@ data Actions m = Actions
   }
 
 data HasParens = HaveParens | DontHaveParens
+  deriving (Show)
 
 data ExpressionRef m = ExpressionRef
   { rExpression :: Expression m
@@ -78,17 +79,24 @@ data ExpressionRef m = ExpressionRef
   , rActions :: Maybe (Actions m)
   }
 
+instance Show (ExpressionRef m) where
+  show (ExpressionRef expr its guid _) =
+    show guid ++ ":" ++ show expr ++ ":" ++ show its
+
 data WhereItem m = WhereItem
   { wiGuid :: Guid
   , wiTypeGuid :: Guid
   , wiMDelete :: Maybe (T m Guid)
   , wiValue :: ExpressionRef m
   }
+instance Show (WhereItem m) where
+  show (WhereItem guid typGuid _ val) =
+    "WhereItem:" ++ show guid ++ "," ++ show typGuid ++ ":" ++ show val
 
 data Where m = Where
   { wWheres :: [WhereItem m]
   , wBody :: ExpressionRef m
-  }
+  } deriving (Show)
 
 data FuncParamActions m = FuncParamActions
   { fpaAddNextParam :: T m Guid
@@ -101,21 +109,24 @@ data FuncParam m = FuncParam
   , fpMActions :: Maybe (FuncParamActions m)
   }
 
+instance Show (FuncParam m) where
+  show (FuncParam guid typ _) = "Param:" ++ show guid ++ ":" ++ show typ
+
 -- Multi-param Lambda
 data Func m = Func
   { fParams :: [FuncParam m]
   , fBody :: ExpressionRef m
-  }
+  } deriving (Show)
 
 data Pi m = Pi
   { pParam :: FuncParam m
   , pResultType :: ExpressionRef m
-  }
+  } deriving (Show)
 
 data Apply m = Apply
   { applyFunc :: ExpressionRef m
   , applyArg :: ExpressionRef m
-  }
+  } deriving (Show)
 
 -- Infix Sections include: (+), (1+), (+1), (1+2). Last is really just
 -- infix application, but considered an infix section too.
@@ -124,7 +135,7 @@ data Section m = Section
   , sectionOp :: ExpressionRef m -- Always a GetVariable
   , sectionRArg :: Maybe (ExpressionRef m)
   , sectionInnerApplyGuid :: Maybe Guid
-  }
+  } deriving (Show)
 
 type HoleResult = Infer.Expression ()
 
@@ -135,23 +146,30 @@ data Hole m = Hole
   , holeInferResults :: Data.PureExpression -> ListT (T m) HoleResult
   }
 
+instance Show (Hole m) where
+  show (Hole scope _ _ _) = "Hole (scope: " ++ show scope ++ ")"
+
 data LiteralInteger m = LiteralInteger
   { liValue :: Integer
   , liSetValue :: Maybe (Integer -> T m ())
   }
 
+instance Show (LiteralInteger m) where
+  show (LiteralInteger val _) = show val
+
 data Inferred m = Inferred
   { iValue :: ExpressionRef m
   , iHole :: Hole m
-  }
+  } deriving (Show)
 
 data Polymorphic m = Polymorphic
   { pCompact :: Maybe (ExpressionRef m)
   , pFullExpression :: ExpressionRef m
-  }
+  } deriving (Show)
 
 data GetVariable
   = GetParameter Guid | GetDefinition Data.DefinitionIRef
+  deriving (Show)
 
 data Expression m
   = ExpressionApply   { eHasParens :: HasParens, eApply :: Apply m }
@@ -165,6 +183,7 @@ data Expression m
   | ExpressionPolymorphic { _ePolymorphic :: Polymorphic m }
   | ExpressionLiteralInteger { _eLit :: LiteralInteger m }
   | ExpressionAtom { _eAtom :: String }
+  deriving (Show)
 
 data DefinitionNewType m = DefinitionNewType
   { dntNewType :: ExpressionRef m
