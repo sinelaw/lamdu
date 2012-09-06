@@ -42,24 +42,41 @@ make makeExpressionEdit hasParens (Sugar.Pi param resultType) =
           Nothing -> cursor
           Just _ -> typeId
     VarAccess.atEnv (OT.atEnvCursor redirectCursor) $ do
-      paramTypeEdit <- makeExpressionEdit $ Sugar.fpType param
-      paramEdit <-
-        if paramUsed
+      let paramType = Sugar.fpType param
+      paramTypeGs <-
+        case Sugar.rExpression paramType of
+        Sugar.ExpressionAtom "Set" -> return []
+        _ -> sequence
+          [ liftM fvw $ label ":"
+          , makeExpressionEdit paramType
+          ]
+      if paramUsed
         then do
+          forallLabel <- label "∀"
           paramNameEdit <- FuncEdit.makeParamNameEdit name paramGuid
-          colonLabel <- VarAccess.otransaction . BWidgets.makeLabel ":" $ Widget.toAnimId paramId
-          return $ ExpressionGui.hbox
-            [ ExpressionGui.fromValueWidget paramNameEdit
-            , ExpressionGui.fromValueWidget colonLabel
-            , paramTypeEdit
+          dotLabel <- label "."
+          return . ExpressionGui.hbox $
+            map fvw
+            [ forallLabel
+            , paramNameEdit
+            ] ++
+            paramTypeGs ++
+            map fvw
+            [ dotLabel
+            ] ++
+            [ resultTypeEdit
             ]
-        else return paramTypeEdit
-      rightArrowLabel <-
-        VarAccess.atEnv (OT.setTextSizeColor Config.rightArrowTextSize Config.rightArrowColor) .
-        VarAccess.otransaction . BWidgets.makeLabel "→" $ Widget.toAnimId myId
-      return $ ExpressionGui.hboxSpaced
-        [paramEdit, ExpressionGui.fromValueWidget rightArrowLabel, resultTypeEdit]
+        else do
+          rightArrowLabel <-
+            VarAccess.atEnv
+            (OT.setTextSizeColor Config.rightArrowTextSize Config.rightArrowColor) $
+            label "→"
+          paramTypeEdit <- makeExpressionEdit paramType
+          return $ ExpressionGui.hboxSpaced
+            [paramTypeEdit, fvw rightArrowLabel, resultTypeEdit]
   where
+    fvw = ExpressionGui.fromValueWidget
+    label text = VarAccess.otransaction . BWidgets.makeLabel text $ Widget.toAnimId paramId
     paramGuid = Sugar.fpGuid param
     paramId = WidgetIds.fromGuid paramGuid
     typeId =
