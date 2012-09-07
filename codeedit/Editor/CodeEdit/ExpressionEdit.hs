@@ -44,21 +44,28 @@ pasteEventMap =
 
 make :: MonadF m => ExpressionGui.Maker m
 make sExpr = do
-  (holePicker, widget) <- makeEditor sExpr exprId
+  (holePicker, gui) <- makeEditor sExpr exprId
   typeEdits <- mapM make $ Sugar.plInferredTypes payload
-  let onReadOnly = Widget.doesntTakeFocus
-  return .
-    ExpressionGui.atEgWidget
-    ( maybe onReadOnly (const id) (Sugar.plActions payload) .
-      (Widget.weakerEvents . expressionEventMap holePicker . Sugar.rPayload) sExpr
-    ) .
-    ExpressionGui.addType ExpressionGui.Background exprId
-    (map
+  let
+    onReadOnly = Widget.doesntTakeFocus
+    addTypes
+      | Widget.wIsFocused $ ExpressionGui.egWidget gui
+        = ExpressionGui.addType ExpressionGui.Background
+          exprId styledTypeEdits
+      | otherwise
+        = id
+    styledTypeEdits =
+      map
       ( Widget.tint Config.inferredTypeTint
       . Widget.scale Config.typeScaleFactor
       . ExpressionGui.egWidget
-      ) typeEdits) $
-    widget
+      ) typeEdits
+  return .
+    ExpressionGui.atEgWidget
+    ( maybe onReadOnly (const id) (Sugar.plActions payload)
+    . Widget.weakerEvents (expressionEventMap holePicker payload)
+    ) $
+    addTypes gui
   where
     payload = Sugar.rPayload sExpr
     exprId = WidgetIds.fromGuid $ Sugar.rGuid sExpr
