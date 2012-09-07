@@ -103,8 +103,8 @@ inferredTypeTint = inferredValueTint
 inferredTypeErrorBGColor = Draw.Color 0.5 0.05 0.05 1
 inferredTypeBGColor = Draw.Color 0.05 0.15 0.2 1
 
-polymorphicCompactBGColor = Draw.Color 0.15 0.05 0.15 1
-polymorphicFullBGColor = Draw.Color 0.1 0.05 0.1 1
+polymorphicCompactUnderlineColor = Draw.Color 0.3 0.1 0.3 1
+polymorphicFullUnderlineColor = Draw.Color 0.2 0.1 0.2 1
 
 cursorBGColor = Draw.Color 0 0 1 0.3
 

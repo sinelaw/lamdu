@@ -1,19 +1,34 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Editor.CodeEdit.ExpressionEdit.PolymorphicEdit(make) where
 
-import Control.Monad (liftM)
+import Control.Monad (liftM, void)
+import Data.Monoid (mappend)
+import Data.Vector.Vector2 (Vector2(..))
 import Editor.CodeEdit.ExpressionEdit.ExpressionGui (ExpressionGui)
 import Editor.CodeEdit.VarAccess (VarAccess)
 import Editor.MonadF (MonadF)
+import Graphics.UI.Bottle.Animation (AnimId)
+import Graphics.UI.Bottle.Widget (Widget)
 import qualified Editor.BottleWidgets as BWidgets
 import qualified Editor.CodeEdit.ExpressionEdit.ExpressionGui as ExpressionGui
 import qualified Editor.CodeEdit.Sugar as Sugar
 import qualified Editor.CodeEdit.VarAccess as VarAccess
 import qualified Editor.Config as Config
-import qualified Editor.Layers as Layers
 import qualified Editor.WidgetIds as WidgetIds
+import qualified Graphics.DrawingCombinators as Draw
+import qualified Graphics.UI.Bottle.Animation as Anim
 import qualified Graphics.UI.Bottle.Widget as Widget
 import qualified Graphics.UI.Bottle.Widgets.FocusDelegator as FocusDelegator
+
+underline :: AnimId -> Draw.Color -> Widget f -> Widget f
+underline animId color widget = Widget.atWFrame (mappend lineF) widget
+  where
+    Vector2 width height = Widget.wSize widget
+    lineF =
+      Anim.translate (Vector2 0 height) .
+      Anim.scale (Vector2 width 1) $
+      Anim.simpleFrame (animId ++ ["underline"]) line
+    line = void . Draw.tint color $ Draw.line (0, 1) (1, 1)
 
 -- make without the focus delegator
 makeInner ::
@@ -29,13 +44,13 @@ makeInner makeExpressionEdit poly myId =
     -- so if the cursor is on us it means user enterred our widget.
     case (Widget.wIsFocused (ExpressionGui.egWidget fullExprEdit), Sugar.pCompact poly) of
       (False, Just compact) ->
-        (liftM . bg) Config.polymorphicCompactBGColor .
+        (liftM . decorate) Config.polymorphicCompactUnderlineColor .
         VarAccess.otransaction .
         ExpressionGui.atEgWidgetM (BWidgets.makeFocusableView myId) =<<
         makeExpressionEdit compact
-      _ -> return $ bg Config.polymorphicFullBGColor fullExprEdit
+      _ -> return $ decorate Config.polymorphicFullUnderlineColor fullExprEdit
   where
-    bg = ExpressionGui.atEgWidget . Widget.backgroundColor Layers.polymorphicBG (Widget.toAnimId myId ++ ["bg"])
+    decorate = ExpressionGui.atEgWidget . underline (Widget.toAnimId myId)
     assignCursor =
       maybe id (VarAccess.assignCursor myId . WidgetIds.fromGuid . Sugar.rGuid) $
       Sugar.pCompact poly
