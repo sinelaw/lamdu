@@ -76,10 +76,10 @@ lambdaWrapKeys = [k '\\']
 addWhereItemKeys = [k 'w']
 
 lambdaColor = Draw.Color 1 0.2 0.2 1
-lambdaTextSize = 30
+lambdaTextSize = 9
 
 rightArrowColor = Draw.Color 1 0.2 0.2 1
-rightArrowTextSize = 30
+rightArrowTextSize = 9
 
 whereColor = Draw.Color 0.8 0.6 0.1 1
 whereScaleFactor = 0.85
@@ -115,7 +115,7 @@ cursorBGColor = Draw.Color 0 0 1 0.45
 helpStyle font = TextView.Style {
   TextView._styleColor = Draw.Color 1 1 1 1,
   TextView._styleFont = font,
-  TextView._styleFontSize = 10
+  TextView._styleFontSize = 6
   }
 
 baseStyle font = TextEdit.Style
@@ -123,7 +123,7 @@ baseStyle font = TextEdit.Style
     TextView.Style
       { TextView._styleColor = Draw.Color 1 1 1 1
       , TextView._styleFont = font
-      , TextView._styleFontSize = 25
+      , TextView._styleFontSize = 8
       }
   , TextEdit._sCursorColor = TextEdit.defaultCursorColor
   , TextEdit._sCursorWidth = TextEdit.defaultCursorWidth
@@ -145,7 +145,7 @@ enlargeBaseFontKeys = [ctrl '=']
 enlargeFactor = 1.1
 shrinkFactor = 1.1
 
-defTypeLabelTextSize = 16
+defTypeLabelTextSize = 8
 defTypeLabelColor = Draw.Color 0.6 0.7 1 1
 
 defTypeBoxSizeFactor = 0.6
