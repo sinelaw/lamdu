@@ -145,7 +145,7 @@ makeWordEdit =
   EventMap.ModKey EventMap.noMods EventMap.KeySpace
 
 stdSpaceWidget :: Widget f
-stdSpaceWidget = uncurry Widget.liftView $ Spacer.makeHorizontal 7
+stdSpaceWidget = uncurry Widget.liftView $ Spacer.makeHorizontal 20
 
 hboxSpaced :: [(Box.Alignment, Widget f)] -> Widget f
 hboxSpaced = Box.hbox . intersperse (0.5, stdSpaceWidget)
