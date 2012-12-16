@@ -2,10 +2,14 @@
 module Lamdu.CodeEdit.ExpressionEdit.VarEdit(make, makeView) where
 
 import Control.MonadA (MonadA)
+import Data.Store.IRef (Tag)
 import Lamdu.Anchors (ViewM)
 import Lamdu.CodeEdit.ExpressionEdit.ExpressionGui (ExpressionGui)
 import Lamdu.CodeEdit.ExpressionEdit.ExpressionGui.Monad (ExprGuiM)
 import qualified Control.Lens as Lens
+import qualified Graphics.DrawingCombinators as Draw
+import qualified Graphics.UI.Bottle.EventMap as E
+import qualified Graphics.UI.Bottle.Widget as Widget
 import qualified Lamdu.BottleWidgets as BWidgets
 import qualified Lamdu.CodeEdit.ExpressionEdit.ExpressionGui as ExpressionGui
 import qualified Lamdu.CodeEdit.ExpressionEdit.ExpressionGui.Monad as ExprGuiM
@@ -15,8 +19,6 @@ import qualified Lamdu.Data.IRef as DataIRef
 import qualified Lamdu.Data.Ops as DataOps
 import qualified Lamdu.WidgetEnvT as WE
 import qualified Lamdu.WidgetIds as WidgetIds
-import qualified Graphics.DrawingCombinators as Draw
-import qualified Graphics.UI.Bottle.Widget as Widget
 
 colorOf :: Data.VariableRef def -> Draw.Color
 colorOf (Data.DefinitionRef _) = Config.definitionColor
@@ -25,7 +27,7 @@ colorOf (Data.ParameterRef _) = Config.parameterColor
 -- Color should be determined on the outside!
 makeView
   :: MonadA m
-  => Data.VariableRef (DataIRef.DefI (m ()))
+  => Data.VariableRef (DataIRef.DefI (Tag m))
   -> Widget.Id
   -> ExprGuiM m (ExpressionGui m)
 makeView var myId = ExprGuiM.withNameFromVarRef var $ \(nameSrc, name) ->
@@ -37,7 +39,7 @@ makeView var myId = ExprGuiM.withNameFromVarRef var $ \(nameSrc, name) ->
 
 make
   :: m ~ ViewM
-  => Data.VariableRef (DataIRef.DefI (m ()))
+  => Data.VariableRef (DataIRef.DefI (Tag m))
   -> Widget.Id
   -> ExprGuiM m (ExpressionGui m)
 make getVar myId = do
@@ -49,7 +51,7 @@ make getVar myId = do
     makeView getVar myId
   let
     jumpToDefinitionEventMap =
-      Widget.keysEventMapMovesCursor Config.jumpToDefinitionKeys "Jump to definition"
+      Widget.keysEventMapMovesCursor Config.jumpToDefinitionKeys (E.Doc ["Navigation", "Jump to definition"])
       jumpToDefinition
     jumpToDefinition =
       case getVar of

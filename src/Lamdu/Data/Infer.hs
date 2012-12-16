@@ -128,6 +128,11 @@ data ErrorDetails def
   | InfiniteExpression (Data.Expression def ())
   deriving (Show, Eq, Ord)
 derive makeBinary ''ErrorDetails
+instance Functor ErrorDetails where
+  fmap f (MismatchIn x y) =
+    on MismatchIn (Lens.over Data.expressionDef f) x y
+  fmap f (InfiniteExpression x) =
+    InfiniteExpression $ Lens.over Data.expressionDef f x
 
 data Error def = Error
   { errRef :: ExprRef
@@ -138,6 +143,11 @@ data Error def = Error
   , errDetails :: ErrorDetails def
   } deriving (Show, Eq, Ord)
 derive makeBinary ''Error
+instance Functor Error where
+  fmap f (Error ref mis details) =
+    Error ref
+    (Lens.over (Lens.both . Data.expressionDef) f mis)
+    (fmap f details)
 
 newtype InferActions def m = InferActions
   { reportError :: Error def -> m ()
@@ -494,6 +504,7 @@ data Loaded def a = Loaded
   { _lExpr :: Data.Expression def a
   , _lDefTypes :: Map def (Data.Expression def ())
   } deriving (Typeable, Functor)
+-- Requires Ord instance for def, cannot derive
 instance (Binary a, Binary def, Ord def) => Binary (Loaded def a) where
   get = Loaded <$> get <*> get
   put (Loaded a b) = put a >> put b
@@ -507,12 +518,12 @@ load loader mRecursiveDef expr =
   where
     loadDefTypes =
       fmap Map.fromList .
-      traverse loadType $ ordNub
-      [ defI
-      | Data.ExpressionLeaf (Data.GetVariable (Data.DefinitionRef defI)) <-
-        map (Lens.view Data.eValue) $ Data.subExpressions expr
-      , Just defI /= mRecursiveDef
-      ]
+      traverse loadType . ordNub $
+      Lens.toListOf
+      ( Lens.folding Data.subExpressions . Data.eValue
+      . Data.expressionLeaf . Data.getVariable . Data.definitionRef
+      . Lens.filtered ((/= mRecursiveDef) . Just)
+      ) expr
     loadType defI = fmap ((,) defI) $ loadPureDefinitionType loader defI
 
 addRule :: Rule def -> State (InferState def m) ()

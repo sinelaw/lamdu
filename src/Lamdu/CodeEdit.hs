@@ -12,20 +12,27 @@ import Data.List.Utils (enumerate, insertAt, removeAt)
 import Data.Maybe (listToMaybe)
 import Data.Monoid (Monoid(..))
 import Data.Store.Guid (Guid)
+import Data.Store.IRef (Tag)
 import Data.Store.Transaction (Transaction)
 import Data.Traversable (traverse)
+import Graphics.UI.Bottle.Widget (Widget)
 import Lamdu.Anchors (ViewM)
 import Lamdu.CodeEdit.ExpressionEdit.ExpressionGui.Monad (WidgetT, ExprGuiM)
 import Lamdu.CodeEdit.Settings (Settings)
 import Lamdu.Data.IRef (DefI)
 import Lamdu.WidgetEnvT (WidgetEnvT)
-import Graphics.UI.Bottle.Widget (Widget)
 import qualified Control.Lens as Lens
 import qualified Data.Store.IRef as IRef
+import qualified Graphics.DrawingCombinators as Draw
+import qualified Graphics.UI.Bottle.Animation as Anim
+import qualified Graphics.UI.Bottle.EventMap as E
+import qualified Graphics.UI.Bottle.Widget as Widget
+import qualified Graphics.UI.Bottle.Widgets.Box as Box
+import qualified Graphics.UI.Bottle.Widgets.Spacer as Spacer
 import qualified Lamdu.Anchors as Anchors
 import qualified Lamdu.BottleWidgets as BWidgets
-import qualified Lamdu.CodeEdit.DefinitionEdit as DefinitionEdit
 import qualified Lamdu.CodeEdit.ExpressionEdit as ExpressionEdit
+import qualified Lamdu.CodeEdit.ExpressionEdit.DefinitionEdit as DefinitionEdit
 import qualified Lamdu.CodeEdit.ExpressionEdit.ExpressionGui.Monad as ExprGuiM
 import qualified Lamdu.CodeEdit.Sugar as Sugar
 import qualified Lamdu.Config as Config
@@ -33,12 +40,6 @@ import qualified Lamdu.Data.Ops as DataOps
 import qualified Lamdu.Layers as Layers
 import qualified Lamdu.WidgetEnvT as WE
 import qualified Lamdu.WidgetIds as WidgetIds
-import qualified Graphics.DrawingCombinators as Draw
-import qualified Graphics.UI.Bottle.Animation as Anim
-import qualified Graphics.UI.Bottle.Widget as Widget
-import qualified Graphics.UI.Bottle.Widgets.Box as Box
-import qualified Graphics.UI.Bottle.Widgets.FocusDelegator as FocusDelegator
-import qualified Graphics.UI.Bottle.Widgets.Spacer as Spacer
 
 type T = Transaction
 type CT m = StateT Cache (T m)
@@ -58,9 +59,9 @@ makeNewDefinitionAction = do
     newDefI <- DataOps.makeDefinition
     DataOps.newPane newDefI
     DataOps.savePreJumpPosition curCursor
-    return . FocusDelegator.delegatingId $ WidgetIds.fromIRef newDefI
+    return . DefinitionEdit.diveToNameEdit $ WidgetIds.fromIRef newDefI
 
-loadConvertDefI :: DefI (ViewM ()) -> CT ViewM (Sugar.Definition ViewM)
+loadConvertDefI :: DefI (Tag ViewM) -> CT ViewM (Sugar.Definition ViewM)
 loadConvertDefI defI = do
   sugarConfig <- lift $ Anchors.getP Anchors.sugarConfig
   Sugar.loadConvertDefI sugarConfig defI
@@ -146,10 +147,10 @@ makePanesEdit panes = do
     panesEventMap =
       mconcat
       [ Widget.keysEventMapMovesCursor Config.newDefinitionKeys
-        "New definition" newDefinition
+        (E.Doc ["Edit", "New definition"]) newDefinition
       , maybe mempty
         (Widget.keysEventMapMovesCursor Config.previousCursorKeys
-         "Go to previous position") mJumpBack
+         (E.Doc ["Navigation", "Go back"])) mJumpBack
       ]
 
   return $ Widget.weakerEvents panesEventMap panesWidget
@@ -159,9 +160,15 @@ makePanesEdit panes = do
       (fmap . Widget.weakerEvents) (paneEventMap pane) .
       makePaneWidget . spDef $ pane
     paneEventMap pane = mconcat
-      [ maybe mempty (Widget.keysEventMapMovesCursor Config.closePaneKeys "Close pane" . fmap WidgetIds.fromGuid) $ mDelPane pane
-      , maybe mempty (Widget.keysEventMap Config.movePaneDownKeys "Move pane down") $ mMovePaneDown pane
-      , maybe mempty (Widget.keysEventMap Config.movePaneUpKeys "Move pane up") $ mMovePaneUp pane
+      [ maybe mempty
+        (Widget.keysEventMapMovesCursor Config.closePaneKeys
+         (E.Doc ["View", "Pane", "Close"]) . fmap WidgetIds.fromGuid) $ mDelPane pane
+      , maybe mempty
+        (Widget.keysEventMap Config.movePaneDownKeys
+         (E.Doc ["View", "Pane", "Move down"])) $ mMovePaneDown pane
+      , maybe mempty
+        (Widget.keysEventMap Config.movePaneUpKeys
+         (E.Doc ["View", "Pane", "Move up"])) $ mMovePaneUp pane
       ]
 
 makePaneWidget :: MonadA m => Sugar.Definition m -> ExprGuiM m (Widget (T m))

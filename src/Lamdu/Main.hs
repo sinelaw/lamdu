@@ -3,7 +3,7 @@ module Main(main) where
 
 import Control.Arrow (second)
 import Control.Lens ((^.))
-import Control.Monad (unless)
+import Control.Monad (when, unless)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State (StateT, runStateT, mapStateT)
 import Data.ByteString (unpack)
@@ -13,14 +13,14 @@ import Data.List(intercalate)
 import Data.Monoid(Monoid(..))
 import Data.Store.Db (Db)
 import Data.Store.Transaction (Transaction)
-import Data.Vector.Vector2(Vector2)
+import Data.Vector.Vector2 (Vector2(..))
 import Data.Word(Word8)
-import Lamdu.CodeEdit.Settings (Settings(..))
-import Lamdu.WidgetEnvT (runWidgetEnvT)
 import Graphics.DrawingCombinators((%%))
 import Graphics.UI.Bottle.Animation(AnimId)
 import Graphics.UI.Bottle.MainLoop(mainLoopWidget)
 import Graphics.UI.Bottle.Widget(Widget)
+import Lamdu.CodeEdit.Settings (Settings(..))
+import Lamdu.WidgetEnvT (runWidgetEnvT)
 import Numeric (showHex)
 import Paths_lamdu (getDataFileName)
 import System.Environment (getArgs)
@@ -31,6 +31,17 @@ import qualified Data.Cache as Cache
 import qualified Data.Map as Map
 import qualified Data.Store.Db as Db
 import qualified Data.Vector.Vector2 as Vector2
+import qualified Graphics.DrawingCombinators as Draw
+import qualified Graphics.DrawingCombinators.Utils as DrawUtils
+import qualified Graphics.UI.Bottle.Animation as Anim
+import qualified Graphics.UI.Bottle.Rect as Rect
+import qualified Graphics.UI.Bottle.Widget as Widget
+import qualified Graphics.UI.Bottle.EventMap as EventMap
+import qualified Graphics.UI.Bottle.Widgets.EventMapDoc as EventMapDoc
+import qualified Graphics.UI.Bottle.Widgets.FlyNav as FlyNav
+import qualified Graphics.UI.Bottle.Widgets.TextEdit as TextEdit
+import qualified Graphics.UI.GLFW as GLFW
+import qualified Graphics.UI.GLFW.Utils as GLFWUtils
 import qualified Lamdu.Anchors as Anchors
 import qualified Lamdu.BranchGUI as BranchGUI
 import qualified Lamdu.CodeEdit as CodeEdit
@@ -40,36 +51,61 @@ import qualified Lamdu.ExampleDB as ExampleDB
 import qualified Lamdu.VersionControl as VersionControl
 import qualified Lamdu.WidgetEnvT as WE
 import qualified Lamdu.WidgetIds as WidgetIds
-import qualified Graphics.DrawingCombinators as Draw
-import qualified Graphics.DrawingCombinators.Utils as DrawUtils
-import qualified Graphics.UI.Bottle.Animation as Anim
-import qualified Graphics.UI.Bottle.Rect as Rect
-import qualified Graphics.UI.Bottle.Widget as Widget
-import qualified Graphics.UI.Bottle.Widgets.EventMapDoc as EventMapDoc
-import qualified Graphics.UI.Bottle.Widgets.FlyNav as FlyNav
-import qualified Graphics.UI.Bottle.Widgets.TextEdit as TextEdit
 import qualified System.Directory as Directory
+
+data ParsedOpts = ParsedOpts
+  { shouldDeleteDB :: Bool
+  , mFontPath :: Maybe FilePath
+  }
+
+parseArgs :: [String] -> Either String ParsedOpts
+parseArgs =
+  go (ParsedOpts False Nothing)
+  where
+    go args [] = return args
+    go (ParsedOpts _ mPath) ("-deletedb" : args) =
+      go (ParsedOpts True mPath) args
+    go _ ("-font" : []) = failUsage "-font must be followed by a font name"
+    go (ParsedOpts delDB mPath) ("-font" : fn : args) =
+      case mPath of
+      Nothing -> go (ParsedOpts delDB (Just fn)) args
+      Just _ -> failUsage "Duplicate -font arguments"
+    go _ (arg : _) = failUsage $ "Unexpected arg: " ++ show arg
+    failUsage msg = fail $ unlines [ msg, usage ]
+    usage = "Usage: lamdu [-deletedb] [-font <filename>]"
 
 main :: IO ()
 main = do
   args <- getArgs
   home <- Directory.getHomeDirectory
   let lamduDir = home </> ".lamdu"
-  case args of
-    ["-deletedb"] -> Directory.removeDirectoryRecursive lamduDir
-    [] -> return ()
-    _ -> fail "Usage: lamdu [-deletedb]"
+  opts <- either fail return $ parseArgs args
+  when (shouldDeleteDB opts) $
+    Directory.removeDirectoryRecursive lamduDir
   Directory.createDirectoryIfMissing False lamduDir
-  let
-    getFont path = do
-      exists <- Directory.doesFileExist path
-      unless exists . ioError . userError $ path ++ " does not exist!"
-      Draw.openFont path
-  font <-
-    (getFont =<< getDataFileName "fonts/DejaVuSans.ttf")
-    `E.catch` \(E.SomeException _) ->
-    getFont "fonts/DejaVuSans.ttf"
-  Db.withDb (lamduDir </> "codeedit.db") $ runDb font
+  -- GLFW changes the directory from start directory, at least on macs.
+  startDir <- Directory.getCurrentDirectory
+
+  GLFWUtils.withGLFW $ do
+    Vector2 displayWidth displayHeight <- GLFWUtils.getVideoModeSize
+    GLFWUtils.openWindow GLFW.defaultDisplayOptions
+      { GLFW.displayOptions_width = displayWidth
+      , GLFW.displayOptions_height = displayHeight
+      }
+    -- Fonts must be loaded after the GL context is created..
+    let
+      getFont path = do
+        exists <- Directory.doesFileExist path
+        unless exists . ioError . userError $ path ++ " does not exist!"
+        Draw.openFont path
+    font <-
+      case mFontPath opts of
+      Nothing ->
+        (getFont =<< getDataFileName "fonts/DejaVuSans.ttf")
+        `E.catch` \(E.SomeException _) ->
+        getFont $ startDir </> "fonts/DejaVuSans.ttf"
+      Just path -> getFont path
+    Db.withDb (lamduDir </> "codeedit.db") $ runDb font
 
 rjust :: Int -> a -> [a] -> [a]
 rjust len x xs = replicate (length xs - len) x ++ xs
@@ -116,7 +152,7 @@ mainLoopDebugMode font makeWidget addHelp = do
     addDebugMode widget = do
       isDebugMode <- readIORef debugModeRef
       let
-        doc = (if isDebugMode then "Disable" else "Enable") ++ " Debug Mode"
+        doc = EventMap.Doc $ "Debug Mode" : if isDebugMode then ["Disable"] else ["Enable"]
         set = writeIORef debugModeRef (not isDebugMode)
       return .
         whenApply isDebugMode (Lens.over Widget.wFrame (addAnnotations font)) $
@@ -141,9 +177,9 @@ makeSizeFactor = do
   factor <- newIORef 1
   let
     eventMap = mconcat
-      [ Widget.keysEventMap Config.enlargeBaseFontKeys "Enlarge text" $
+      [ Widget.keysEventMap Config.enlargeBaseFontKeys (EventMap.Doc ["View", "Zoom", "Enlarge"]) $
         modifyIORef factor (* Config.enlargeFactor)
-      , Widget.keysEventMap Config.shrinkBaseFontKeys "Shrink text" $
+      , Widget.keysEventMap Config.shrinkBaseFontKeys (EventMap.Doc ["View", "Zoom", "Shrink"]) $
         modifyIORef factor (/ Config.shrinkFactor)
       ]
   return (factor, eventMap)
@@ -193,9 +229,9 @@ mkGlobalEventMap settingsRef = do
   let
     curInfoMode = settings ^. Settings.sInfoMode
     next = nextInfoMode curInfoMode
-    nextStr = "Show " ++ infoStr next
+    nextDoc = EventMap.Doc ["View", "Subtext", "Show " ++ infoStr next]
   return .
-    Widget.keysEventMap Config.nextInfoMode nextStr .
+    Widget.keysEventMap Config.nextInfoMode nextDoc .
     modifyIORef settingsRef $ Lens.set Settings.sInfoMode next
 
 mkWidgetWithFallback

@@ -12,13 +12,14 @@ module Data.Store.Rev.ViewBranchInternal
   )
 where
 
-import Control.Applicative ((<$>), (<*>))
 import Control.Monad (when)
 import Control.MonadA (MonadA)
 import Data.Binary (Binary(..))
-import Data.Foldable (traverse_, sequenceA_)
+import Data.Derive.Binary (makeBinary)
+import Data.DeriveTH (derive)
+import Data.Foldable (traverse_)
 import Data.Store.Guid (Guid)
-import Data.Store.IRef (IRef)
+import Data.Store.IRef (IRef, Tag)
 import Data.Store.Rev.Change (Change)
 import Data.Store.Rev.Version (Version)
 import Data.Store.Transaction (Transaction)
@@ -39,22 +40,19 @@ data BranchData t = BranchData {
   _brViews :: [View t]
   } deriving (Eq, Ord, Read, Show)
 
-instance Binary (BranchData t) where
-  get = BranchData <$> get <*> get
-  put (BranchData x y) = sequenceA_ [put x, put y]
-
 newtype Branch t = Branch { unBranch :: IRef t (BranchData t) }
   deriving (Eq, Ord, Read, Show, Binary)
 
 newtype ViewData t = ViewData { _vdBranch :: Branch t }
   deriving (Eq, Ord, Show, Read, Binary)
 
+derive makeBinary ''BranchData
 LensTH.makeLenses ''BranchData
 LensTH.makeLenses ''ViewData
 
 -- | moveView must be given the correct source of the movement
 -- | or it will result in undefined results!
-moveView :: MonadA m => View (m ()) -> Version (m ()) -> Version (m ()) -> Transaction m ()
+moveView :: MonadA m => View (Tag m) -> Version (Tag m) -> Version (Tag m) -> Transaction m ()
 moveView vm srcVersion destVersion =
   when (srcVersion /= destVersion) $ do
     mraIRef <- Version.mostRecentAncestor srcVersion destVersion
@@ -69,7 +67,7 @@ makeViewKey :: View t -> Change.Key -> Guid
 makeViewKey (View iref) = Guid.combine . IRef.guid $ iref
 
 applyChangesToView ::
-  MonadA m => View (m ()) -> (Change -> Maybe Change.Value) ->
+  MonadA m => View (Tag m) -> (Change -> Maybe Change.Value) ->
   [Change] -> Transaction m ()
 applyChangesToView vm changeDir = traverse_ applyChange
   where

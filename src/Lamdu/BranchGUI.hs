@@ -11,60 +11,61 @@ import Control.MonadA (MonadA)
 import Data.List (findIndex)
 import Data.Maybe (isJust)
 import Data.Monoid(Monoid(..))
+import Data.Store.IRef (Tag)
 import Data.Store.Rev.Branch (Branch)
 import Data.Store.Transaction (Transaction)
 import Data.Traversable (traverse)
-import Lamdu.VersionControl.Actions (Actions(..))
-import Lamdu.WidgetEnvT (WidgetEnvT)
 import Graphics.UI.Bottle.Animation (AnimId)
 import Graphics.UI.Bottle.Widget (Widget)
+import Lamdu.VersionControl.Actions (Actions(..))
+import Lamdu.WidgetEnvT (WidgetEnvT)
 import qualified Control.Lens as Lens
 import qualified Data.Store.Property as Property
 import qualified Data.Store.Rev.Branch as Branch
 import qualified Data.Store.Transaction as Transaction
-import qualified Lamdu.BottleWidgets as BWidgets
-import qualified Lamdu.Config as Config
-import qualified Lamdu.Layers as Layers
-import qualified Lamdu.WidgetEnvT as WE
-import qualified Lamdu.WidgetIds as WidgetIds
 import qualified Graphics.UI.Bottle.EventMap as E
 import qualified Graphics.UI.Bottle.Widget as Widget
 import qualified Graphics.UI.Bottle.Widgets.Box as Box
 import qualified Graphics.UI.Bottle.Widgets.Edges as Edges
 import qualified Graphics.UI.Bottle.Widgets.FocusDelegator as FocusDelegator
+import qualified Lamdu.BottleWidgets as BWidgets
+import qualified Lamdu.Config as Config
+import qualified Lamdu.Layers as Layers
+import qualified Lamdu.WidgetEnvT as WE
+import qualified Lamdu.WidgetIds as WidgetIds
 
 branchNameFDConfig :: FocusDelegator.Config
 branchNameFDConfig = FocusDelegator.Config
   { FocusDelegator.startDelegatingKey = E.ModKey E.noMods E.KeyF2
-  , FocusDelegator.startDelegatingDoc = "Rename branch"
+  , FocusDelegator.startDelegatingDoc = E.Doc ["Branches", "Rename"]
   , FocusDelegator.stopDelegatingKey = E.ModKey E.noMods E.KeyEnter
-  , FocusDelegator.stopDelegatingDoc = "Stop renaming"
+  , FocusDelegator.stopDelegatingDoc = E.Doc ["Branches", "Done renaming"]
   }
 
 branchSelectionFocusDelegatorConfig :: FocusDelegator.Config
 branchSelectionFocusDelegatorConfig = FocusDelegator.Config
   { FocusDelegator.startDelegatingKey = E.ModKey E.noMods E.KeyEnter
-  , FocusDelegator.startDelegatingDoc = "Enter select branches mode"
+  , FocusDelegator.startDelegatingDoc = E.Doc ["Branches", "Select"]
   , FocusDelegator.stopDelegatingKey = E.ModKey E.noMods E.KeyEnter
-  , FocusDelegator.stopDelegatingDoc = "Select branch"
+  , FocusDelegator.stopDelegatingDoc = E.Doc ["Branches", "Choose selected"]
   }
 
 undoEventMap :: Functor m => Maybe (m Widget.Id) -> Widget.EventHandlers m
 undoEventMap =
-  maybe mempty (Widget.keysEventMapMovesCursor Config.undoKeys "Undo")
+  maybe mempty (Widget.keysEventMapMovesCursor Config.undoKeys (E.Doc ["Edit", "Undo"]))
 
 redoEventMap :: Functor m => Maybe (m Widget.Id) -> Widget.EventHandlers m
 redoEventMap =
-  maybe mempty (Widget.keysEventMapMovesCursor Config.redoKeys "Redo")
+  maybe mempty (Widget.keysEventMapMovesCursor Config.redoKeys (E.Doc ["Edit", "Redo"]))
 
 branchNameProp ::
-  MonadA m => Branch (m ()) -> Transaction m (Transaction.Property m String)
+  MonadA m => Branch (Tag m) -> Transaction m (Transaction.Property m String)
 branchNameProp = Transaction.assocDataRefDef "" "name" . Branch.guid
 
 make ::
   (MonadA m, MonadA n) =>
   (forall a. Transaction n a -> m a) ->
-  Widget.Size -> Actions (n ()) m -> Widget m ->
+  Widget.Size -> Actions (Tag n) m -> Widget m ->
   WidgetEnvT m (Widget m)
 make transaction size actions widget = do
   branchSelectorFocused <-
@@ -87,13 +88,14 @@ make transaction size actions widget = do
     Edges.makeVertical size widget branchSelector
   where
     eventMap = mconcat
-      [ Widget.keysEventMap Config.quitKeys "Quit" (error "Quit")
-      , Widget.keysEventMapMovesCursor Config.makeBranchKeys "New Branch" .
+    -- TODO: Get Quit out of here
+      [ Widget.keysEventMap Config.quitKeys (E.Doc ["Quit"]) (error "Quit")
+      , Widget.keysEventMapMovesCursor Config.makeBranchKeys (E.Doc ["Branches", "New"]) .
         fmap
         (FocusDelegator.delegatingId .
          WidgetIds.fromGuid . Branch.guid) $ makeBranch actions
       , Widget.keysEventMapMovesCursor Config.jumpToBranchesKeys
-        "Select current branch" $ pure currentBranchWidgetId
+        (E.Doc ["Branches", "Select"]) $ pure currentBranchWidgetId
       , undoEventMap $ mUndo actions
       , redoEventMap $ mRedo actions
       ]
@@ -119,7 +121,7 @@ make transaction size actions widget = do
     delBranchEventMap
       | null (drop 1 (branches actions)) = mempty
       | otherwise =
-        Widget.keysEventMapMovesCursor Config.delBranchKeys "Delete Branch" .
+        Widget.keysEventMapMovesCursor Config.delBranchKeys (E.Doc ["Branches", "Delete"]) .
         fmap (WidgetIds.fromGuid . Branch.guid) .
         deleteBranch actions $ currentBranch actions
 

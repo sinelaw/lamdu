@@ -1,20 +1,22 @@
-{-# OPTIONS_GHC -O2 #-}
 {-# LANGUAGE TemplateHaskell, DeriveFunctor, DeriveFoldable, DeriveTraversable, DeriveDataTypeable #-}
 module Lamdu.Data
   ( Definition(..), defBody, defType
   , DefinitionBody(..)
   , FFIName(..)
-  , VariableRef(..)
+  , VariableRef(..), parameterRef, definitionRef
   , Lambda(..), lambdaParamId, lambdaParamType, lambdaBody
   , Apply(..), applyFunc, applyArg
   , Builtin(..)
-  , Leaf(..)
-  , ExpressionBody(..)
+  , Leaf(..), getVariable, literalInteger, hole, set, integerType
+  , ExpressionBody(..), expressionLambda, expressionPi, expressionApply, expressionLeaf
   , ExpressionBodyExpr
-  , makeApply, makePi, makeLambda
-  , hole, pureHole
-  , set, pureSet
-  , makeParameterRef, makeDefinitionRef, makeLiteralInteger
+  , makeApply, pureApply
+  , makePi, makeLambda
+  , pureHole
+  , pureSet
+  , makeParameterRef, makeDefinitionRef
+  , makeLiteralInteger, pureLiteralInteger
+  , pureIntegerType
   , Expression(..), eValue, ePayload
   , pureExpression
   , randomizeExpr
@@ -28,12 +30,11 @@ module Lamdu.Data
   , expressionBodyDef
   , expressionDef
 
-  , ExprLambdaWrapper(..), exprLambdaCons, exprLambdaUncons
-  , maybePi, maybeLambda
+  , ExprLambdaWrapper(..), exprLambdaPrism
   ) where
 
 import Control.Applicative (Applicative(..), liftA2, (<$>))
-import Control.Lens ((^.))
+import Control.Lens (Simple, Prism, (^.))
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Reader (ReaderT, runReaderT)
 import Control.Monad.Trans.State (evalState, state)
@@ -74,6 +75,7 @@ data VariableRef def
   = ParameterRef {-# UNPACK #-} !Guid -- of the lambda/pi
   | DefinitionRef def
   deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
+LensTH.makePrisms ''VariableRef
 
 data Leaf def
   = GetVariable !(VariableRef def)
@@ -82,6 +84,7 @@ data Leaf def
   | IntegerType
   | Hole
   deriving (Eq, Ord, Show, Functor, Foldable, Traversable)
+LensTH.makePrisms ''Leaf
 
 data ExpressionBody def expr
   = ExpressionLambda {-# UNPACK #-} !(Lambda expr)
@@ -89,6 +92,7 @@ data ExpressionBody def expr
   | ExpressionApply {-# UNPACK #-} !(Apply expr)
   | ExpressionLeaf !(Leaf def)
   deriving (Eq, Ord, Functor, Foldable, Traversable)
+LensTH.makePrisms ''ExpressionBody
 
 bitraverseExpressionBody ::
   Applicative f => (defa -> f defb) -> (expra -> f exprb) ->
@@ -105,12 +109,6 @@ expressionBodyDef :: Lens.Traversal (ExpressionBody a expr) (ExpressionBody b ex
 expressionBodyDef = (`bitraverseExpressionBody` pure)
 
 type ExpressionBodyExpr def a = ExpressionBody def (Expression def a)
-
-hole :: ExpressionBody def expr
-hole = ExpressionLeaf Hole
-
-set :: ExpressionBody def expr
-set = ExpressionLeaf Set
 
 makeApply :: expr -> expr -> ExpressionBody def expr
 makeApply func arg = ExpressionApply $ Apply func arg
@@ -202,11 +200,20 @@ expressionDef = (`bitraverseExpression` pure)
 pureExpression :: ExpressionBody def (Expression def ()) -> Expression def ()
 pureExpression = (`Expression` ())
 
+pureIntegerType :: Expression def ()
+pureIntegerType = pureExpression $ ExpressionLeaf IntegerType
+
+pureLiteralInteger :: Integer -> Expression def ()
+pureLiteralInteger = pureExpression . makeLiteralInteger
+
+pureApply :: Expression def () -> Expression def () -> Expression def ()
+pureApply f x = pureExpression $ makeApply f x
+
 pureHole :: Expression def ()
-pureHole = pureExpression hole
+pureHole = pureExpression $ ExpressionLeaf Hole
 
 pureSet :: Expression def ()
-pureSet = pureExpression set
+pureSet = pureExpression $ ExpressionLeaf Set
 
 randomizeExpr :: (RandomGen g, Random r) => g -> Expression def (r -> a) -> Expression def a
 randomizeExpr gen = (`evalState` gen) . traverse randomize
@@ -281,41 +288,25 @@ subExpressions x =
   x : Foldable.concatMap subExpressions (x ^. eValue)
 
 hasGetVar :: Guid -> Expression def a -> Bool
-hasGetVar g =
-  any (isGet . Lens.view eValue) . subExpressions
-  where
-    isGet (ExpressionLeaf (GetVariable (ParameterRef p))) = p == g
-    isGet _ = False
+hasGetVar =
+  Lens.anyOf
+  ( Lens.folding subExpressions . eValue
+  . expressionLeaf . getVariable . parameterRef
+  ) . (==)
 
 isDependentPi :: Expression def a -> Bool
-isDependentPi (Expression (ExpressionPi (Lambda g _ resultType)) _) =
-  hasGetVar g resultType
-isDependentPi _ = False
+isDependentPi =
+  Lens.anyOf (eValue . expressionPi) f
+  where
+    f (Lambda g _ resultType) = hasGetVar g resultType
 
 data ExprLambdaWrapper = ExprLambda | ExprPi
   deriving (Eq, Ord, Show, Typeable)
 derive makeBinary ''ExprLambdaWrapper
 
--- TODO: Rename to extractExpressionLambda?
-maybeLambda :: ExpressionBody def a -> Maybe (Lambda a)
-maybeLambda (ExpressionLambda x) = Just x
-maybeLambda _ = Nothing
-
--- TODO: Rename to extractExpressionPi?
-maybePi :: ExpressionBody def a -> Maybe (Lambda a)
-maybePi (ExpressionPi x) = Just x
-maybePi _ = Nothing
-
-exprLambdaCons :: ExprLambdaWrapper -> Lambda expr -> ExpressionBody def expr
-exprLambdaCons ExprLambda = ExpressionLambda
-exprLambdaCons ExprPi = ExpressionPi
-
-exprLambdaUncons ::
-  ExprLambdaWrapper ->
-  ExpressionBody def expr ->
-  Maybe (Lambda expr)
-exprLambdaUncons ExprLambda = maybeLambda
-exprLambdaUncons ExprPi = maybePi
+exprLambdaPrism :: ExprLambdaWrapper -> Simple Prism (ExpressionBody def expr) (Lambda expr)
+exprLambdaPrism ExprLambda = expressionLambda
+exprLambdaPrism ExprPi = expressionPi
 
 derive makeBinary ''FFIName
 derive makeBinary ''VariableRef

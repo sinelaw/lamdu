@@ -2,8 +2,9 @@
 {-# LANGUAGE TemplateHaskell, FlexibleInstances, MultiParamTypeClasses, GeneralizedNewtypeDeriving, DeriveDataTypeable, DeriveFunctor #-}
 module Graphics.UI.Bottle.EventMap
   ( KeyEvent(..), IsPress(..), ModKey(..)
+  , prettyModKey
   , ModState(..), noMods, shift, ctrl, alt
-  , Key(..), Doc
+  , Key(..), InputDoc, Subtitle, Doc(..)
   , EventMap, lookup, emTickHandlers
   , charEventMap, allChars, simpleChars, charGroup
   , keyEventMap, keyPress, keyPresses
@@ -62,7 +63,11 @@ charOfKey key =
 charKey :: Char -> Key
 charKey = CharKey . toUpper
 
-type Doc = String
+type Subtitle = String
+
+newtype Doc = Doc
+  { docStrs :: [Subtitle]
+  } deriving (Eq, Ord)
 
 data DocHandler a = DocHandler {
   _dhDoc :: Doc,
@@ -72,16 +77,18 @@ data DocHandler a = DocHandler {
 data IsShifted = Shifted | NotShifted
   deriving (Eq, Ord, Show, Read)
 
+type InputDoc = String
+
 -- AllCharsHandler always conflict with each other, but they may or may
 -- not conflict with shifted/unshifted key events (but not with
 -- alt'd/ctrl'd)
 data AllCharsHandler a = AllCharsHandler
-  { _chInputDoc :: String
+  { _chInputDoc :: InputDoc
   , _chDocHandler :: DocHandler (Char -> Maybe (IsShifted -> a))
   } deriving (Functor)
 
 data CharGroupHandler a = CharGroupHandler
-  { _cgInputDoc :: String
+  { _cgInputDoc :: InputDoc
   , _cgChars :: Set Char
   , _cgDocHandler :: DocHandler (Char -> IsShifted -> a)
   } deriving (Functor)
@@ -147,21 +154,21 @@ filterChars p =
       guard $ p c
       handler c
 
-prettyKey :: Key -> String
+prettyKey :: Key -> InputDoc
 prettyKey (CharKey x) = [toLower x]
 prettyKey k
   | "Key" `isPrefixOf` show k = drop 3 $ show k
   | otherwise = show k
 
-prettyModKey :: ModKey -> String
+prettyModKey :: ModKey -> InputDoc
 prettyModKey (ModKey ms key) = prettyModState ms ++ prettyKey key
 
-prettyKeyEvent :: KeyEvent -> String
+prettyKeyEvent :: KeyEvent -> InputDoc
 prettyKeyEvent (KeyEvent Press modKey) = prettyModKey modKey
 prettyKeyEvent (KeyEvent Release modKey) =
   "Depress " ++ prettyModKey modKey
 
-prettyModState :: ModState -> String
+prettyModState :: ModState -> InputDoc
 prettyModState ms = concat $
   ["Ctrl+" | modCtrl ms] ++
   ["Alt+" | modAlt ms] ++
@@ -180,7 +187,7 @@ mkModKey ms k
   | isCharMods ms && k == CharKey ' ' = ModKey ms KeySpace
   | otherwise = ModKey ms k
 
-eventMapDocs :: EventMap a -> [(String, Doc)]
+eventMapDocs :: EventMap a -> [(InputDoc, Doc)]
 eventMapDocs (EventMap dict charGroups _ mAllCharsHandler _) =
   concat
   [ map (Lens.view chInputDoc &&& Lens.view (chDocHandler . dhDoc)) $ maybeToList mAllCharsHandler
@@ -214,7 +221,7 @@ lookup (Events.KeyEvent isPress ms mchar k) (EventMap dict charGroups _ mAllChar
   where
     modKey = mkModKey ms k
 
-charGroup :: String -> Doc -> String -> (Char -> IsShifted -> a) -> EventMap a
+charGroup :: InputDoc -> Doc -> String -> (Char -> IsShifted -> a) -> EventMap a
 charGroup iDoc oDoc chars handler =
   mempty
   { _emCharGroupHandlers =
@@ -227,17 +234,17 @@ charGroup iDoc oDoc chars handler =
 -- low-level "smart constructor" in case we need to enforce
 -- invariants:
 charEventMap
-  :: String -> Doc -> (Char -> Maybe (IsShifted -> a)) -> EventMap a
+  :: InputDoc -> Doc -> (Char -> Maybe (IsShifted -> a)) -> EventMap a
 charEventMap iDoc oDoc handler =
   mempty
   { _emAllCharsHandler =
     Just $ AllCharsHandler iDoc (DocHandler oDoc handler)
   }
 
-allChars :: String -> Doc -> (Char -> IsShifted -> a) -> EventMap a
+allChars :: InputDoc -> Doc -> (Char -> IsShifted -> a) -> EventMap a
 allChars iDoc oDoc f = charEventMap iDoc oDoc $ Just . f
 
-simpleChars :: String -> Doc -> (Char -> a) -> EventMap a
+simpleChars :: InputDoc -> Doc -> (Char -> a) -> EventMap a
 simpleChars iDoc oDoc f =
   allChars iDoc oDoc (const . f)
 
