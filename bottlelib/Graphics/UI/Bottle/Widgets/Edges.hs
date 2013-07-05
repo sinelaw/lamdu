@@ -13,7 +13,6 @@ import Graphics.UI.Bottle.Rect (Rect(..))
 import Graphics.UI.Bottle.Widget (Widget(..))
 import Graphics.UI.Bottle.Widgets.StdKeys (DirKeys(..), stdDirKeys)
 import qualified Control.Lens as Lens
-import qualified Data.Vector.Vector2 as Vector2
 import qualified Graphics.UI.Bottle.Direction as Direction
 import qualified Graphics.UI.Bottle.EventMap as EventMap
 import qualified Graphics.UI.Bottle.Rect as Rect
@@ -28,7 +27,7 @@ choose x y (Direction.Point pt) = chooseRect x y $ Rect pt 0
 
 chooseRect :: Widget.EnterResult f -> Widget.EnterResult f -> Rect -> Widget.EnterResult f
 chooseRect x y rect =
-  minimumOn (Rect.distance rect . Lens.view Widget.enterResultRect) [x, y]
+  minimumOn (Rect.distance rect . (^. Widget.enterResultRect)) [x, y]
   where
     minimumOn = minimumBy . comparing
 
@@ -56,9 +55,9 @@ makeVertical size top unTranslatedBottom = Widget
       (Widget.weakerEvents . mkEventMap me doc (mkKeys ks))
       (_wMaybeEnter other) me
     mkEventMap me doc keys enterOther =
-      EventMap.keyPresses keys doc . Lens.view Widget.enterResultEvent . enterOther .
+      EventMap.keyPresses keys doc . (^. Widget.enterResultEvent) . enterOther .
       Direction.PrevFocalArea $ _wFocalArea me
     bottom = Widget.translate (Vector2 0 (max topHeight bottomsTop)) unTranslatedBottom
-    topHeight = _wSize top ^. Vector2.second
-    bottomHeight = _wSize unTranslatedBottom ^. Vector2.second
-    bottomsTop = size ^. Vector2.second - bottomHeight
+    topHeight = _wSize top ^. Lens._2
+    bottomHeight = _wSize unTranslatedBottom ^. Lens._2
+    bottomsTop = size ^. Lens._2 - bottomHeight

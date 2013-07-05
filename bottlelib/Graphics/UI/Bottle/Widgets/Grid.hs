@@ -10,9 +10,8 @@ module Graphics.UI.Bottle.Widgets.Grid
   , Cursor, toWidget, toWidgetBiased
   ) where
 
-import Control.Applicative (liftA2)
-import Control.Arrow (first, second)
-import Control.Lens ((^.))
+import Control.Applicative (liftA2, (<$>))
+import Control.Lens ((^.), (%~))
 import Control.Monad (join, msum)
 import Data.Function (on)
 import Data.List (foldl', transpose, find, minimumBy, sortBy, groupBy)
@@ -27,7 +26,6 @@ import Graphics.UI.Bottle.Widget (Widget(..), R)
 import Graphics.UI.Bottle.Widgets.GridView (Alignment)
 import Graphics.UI.Bottle.Widgets.StdKeys (DirKeys(..), stdDirKeys)
 import qualified Control.Lens as Lens
-import qualified Control.Lens.TH as LensTH
 import qualified Data.Vector.Vector2 as Vector2
 import qualified Graphics.UI.Bottle.Direction as Direction
 import qualified Graphics.UI.Bottle.EventMap as EventMap
@@ -42,7 +40,7 @@ length2d :: [[a]] -> Vector2 Int
 length2d xs = Vector2 (foldl' max 0 . map length $ xs) (length xs)
 
 capCursor :: Vector2 Int -> Vector2 Int -> Vector2 Int
-capCursor size = fmap (max 0) . liftA2 min (fmap (subtract 1) size)
+capCursor size = fmap (max 0) . liftA2 min (subtract 1 <$> size)
 
 data NavDests f = NavDests
   { leftOfCursor
@@ -106,13 +104,12 @@ mkNavEventmap navDests = (weakMap, strongMap)
     k = EventMap.ModKey EventMap.noMods
     ctrlK = EventMap.ModKey EventMap.ctrl
     movementk dirName = movement dirName . map k
-    movement dirName events =
-      fmap
-        (EventMap.keyPresses
-         events
-         (EventMap.Doc ["Navigation", "Move", dirName]) .
-         Lens.view Widget.enterResultEvent) .
-      ($ navDests)
+    movement dirName events f =
+      (EventMap.keyPresses
+       events
+       (EventMap.Doc ["Navigation", "Move", dirName]) .
+       (^. Widget.enterResultEvent)) <$>
+      f navDests
 
 getCursor :: [[Widget k]] -> Maybe Cursor
 getCursor =
@@ -132,8 +129,8 @@ data KGrid key f = KGrid
   , _gridContent :: [[(key, Element f)]]
   }
 
-LensTH.makeLenses ''Element
-LensTH.makeLenses ''KGrid
+Lens.makeLenses ''Element
+Lens.makeLenses ''KGrid
 
 type Grid = KGrid ()
 
@@ -148,11 +145,10 @@ makeKeyed children = KGrid
       GridView.makeGeneric translate $
       (map . map) mkSizedKeyedContent children
     mkSizedKeyedContent (key, (alignment, widget)) =
-      ((widget ^. Widget.wSize, alignment), (key, widget))
+      (alignment, (widget ^. Widget.wSize, (key, widget)))
     translate align rect =
-      second
-      (Element align rect .
-       Widget.translate (rect ^. Rect.topLeft))
+      Lens._2 %~
+      Element align rect . Widget.translate (rect ^. Rect.topLeft)
 
 unkey :: [[(Alignment, Widget f)]] -> [[((), (Alignment, Widget f))]]
 unkey = (map . map) ((,) ())
@@ -170,7 +166,7 @@ helper ::
   (Widget.Size -> [[Widget.MEnter f]] -> Widget.MEnter f) ->
   KGrid key f -> Widget f
 helper combineEnters (KGrid mCursor size sChildren) =
-  combineWs $ (map . map) (Lens.view elementW . snd) sChildren
+  combineWs $ (map . map) (^. Lens._2 . elementW) sChildren
   where
     combineWs wss =
       maybe unselectedW makeW mCursor
@@ -225,7 +221,7 @@ groupSortOn f = groupOn f . sortOn f
 toWidgetBiased :: Cursor -> KGrid key f -> Widget f
 toWidgetBiased (Vector2 x y) =
   helper $ \size children ->
-  fmap (maybeOverride children) $ combineMEnters size children
+  maybeOverride children <$> combineMEnters size children
   where
     maybeOverride children enter dir =
       case dir of
@@ -245,7 +241,7 @@ combineMEnters size children = chooseClosest childEnters
   where
     childEnters =
       mapMaybe indexIntoMaybe .
-      (concatMap . map . first) tupleToVector2 $
+      concat . (Lens.mapped . Lens.mapped . Lens._1 %~ tupleToVector2) $
       enumerate2d children
 
     chooseClosest [] = Nothing
@@ -254,24 +250,24 @@ combineMEnters size children = chooseClosest childEnters
     byDirection dir =
       minimumOn
       (Vector2.uncurry (+) . abs . modifyDistance .
-       distance dirRect . Lens.view Widget.enterResultRect) .
+       distance dirRect . (^. Widget.enterResultRect)) .
       map ($ dir) $ filteredByEdge edge
       where
-        removeUninterestingAxis = ((1 - abs (fmap fromIntegral edge)) *)
+        removeUninterestingAxis = ((1 - abs (fromIntegral <$> edge)) *)
         (modifyDistance, dirRect) = case dir of
           Direction.Outside -> (id, Rect 0 0)
           Direction.PrevFocalArea x -> (removeUninterestingAxis, x)
           Direction.Point x -> (id, Rect x 0)
         edge = asEdge size dirRect
 
-    distance = (-) `on` Lens.view Rect.center
+    distance = (-) `on` (^. Rect.center)
 
     filteredByEdge = memo $ \(Vector2 hEdge vEdge) ->
       map snd .
-      safeHead . groupSortOn ((* (-hEdge)) . Lens.view Vector2.first . fst) .
-      safeHead . groupSortOn ((* (-vEdge)) . Lens.view Vector2.second . fst) $
+      safeHead . groupSortOn ((* (-hEdge)) . (^. Lens._1 . Lens._1)) .
+      safeHead . groupSortOn ((* (-vEdge)) . (^. Lens._1 . Lens._2)) $
       childEnters
-    indexIntoMaybe (i, m) = fmap ((,) i) m
+    indexIntoMaybe (i, m) = (,) i <$> m
 
 safeHead :: Monoid a => [a] -> a
 safeHead = mconcat . take 1
@@ -285,6 +281,6 @@ asEdge size rect =
     boolToInt False = 0
     boolToInt True = 1
     Vector2 leftEdge topEdge =
-      fmap (<= 0) (rect ^. Rect.bottomRight)
+      (<= 0) <$> (rect ^. Rect.bottomRight)
     Vector2 rightEdge bottomEdge =
       liftA2 (>=) (rect ^. Rect.topLeft) size

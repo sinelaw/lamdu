@@ -3,8 +3,11 @@ module Data.Store.Rev.View
     (View, curVersion, branch, setBranch, move, new, store)
 where
 
-import Control.Monad ((<=<))
+import Control.Applicative ((<$>), (<$))
+import Control.Lens.Operators
+import Control.Monad ((<=<), guard, unless)
 import Control.MonadA (MonadA)
+import Data.Maybe (catMaybes)
 import Data.Store.IRef (IRef, Tag)
 import Data.Store.Rev.Branch (Branch)
 import Data.Store.Rev.Change(Change(..))
@@ -13,7 +16,6 @@ import Data.Store.Rev.ViewBranchInternal (BranchData, ViewData(..), View(..), Br
 import Data.Store.Transaction (Transaction, Store(..))
 import Data.Traversable (traverse)
 import Prelude hiding (lookup)
-import qualified Control.Lens as Lens
 import qualified Data.List as List
 import qualified Data.Store.Property as Property
 import qualified Data.Store.Rev.Branch as Branch
@@ -68,16 +70,18 @@ move :: MonadA m => View (Tag m) -> Version (Tag m) -> Transaction m ()
 move view version = (`Branch.move` version) =<< branch view
 
 branch :: MonadA m => View (Tag m) -> Transaction m (Branch (Tag m))
-branch (View iref) = fmap (Lens.view vdBranch) . Transaction.readIRef $ iref
+branch (View iref) = (^. vdBranch) <$> Transaction.readIRef iref
 
 transaction :: MonadA m => View (Tag m) -> [(Change.Key, Maybe Change.Value)] -> Transaction m ()
-transaction _    [] = return ()
-transaction view changes = do
-  b <- branch view
-  Branch.newVersion b =<< traverse makeChange changes
+transaction view updates = do
+  changes <- catMaybes <$> traverse makeChange updates
+  unless (null changes) $ do
+    b <- branch view
+    Branch.newVersion b changes 
   where
-    makeChange (key, value) =
-      flip (Change key) value `fmap` lookupBS view key
+    makeChange (key, value) = do
+      prev <- lookupBS view key
+      return $ Change key prev value <$ guard (value /= prev)
 
 -- You get a store tagged however you like...
 store :: MonadA m => View (Tag m) -> Store (Transaction m)

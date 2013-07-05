@@ -1,21 +1,24 @@
 module Graphics.UI.Bottle.MainLoop (mainLoopAnim, mainLoopImage, mainLoopWidget) where
 
-import Control.Arrow(first, second)
-import Control.Concurrent(threadDelay)
-import Control.Lens ((^.))
-import Control.Monad (when)
+import Control.Applicative ((<$>))
+import Control.Concurrent (threadDelay)
+import Control.Lens.Operators
+import Control.Lens.Tuple
+import Control.Monad (when, unless)
 import Data.IORef
 import Data.MRUMemo (memoIO)
-import Data.StateVar (($=))
+import Data.Monoid (Monoid(..))
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
 import Data.Traversable (traverse, sequenceA)
 import Data.Vector.Vector2 (Vector2(..))
 import Graphics.DrawingCombinators ((%%))
 import Graphics.DrawingCombinators.Utils (Image)
+import Graphics.Rendering.OpenGL.GL (($=))
 import Graphics.UI.Bottle.Animation(AnimId)
 import Graphics.UI.Bottle.Widget(Widget)
 import Graphics.UI.GLFW.Events (KeyEvent, GLFWEvent(..), eventLoop)
 import qualified Control.Lens as Lens
+import qualified Data.Monoid as Monoid
 import qualified Graphics.DrawingCombinators as Draw
 import qualified Graphics.Rendering.OpenGL.GL as GL
 import qualified Graphics.UI.Bottle.Animation as Anim
@@ -58,8 +61,8 @@ mainLoopImage eventHandler makeImage =
           image
 
 mainLoopAnim
-  :: (Widget.Size -> IO (Maybe (AnimId -> AnimId)))
-  -> (Widget.Size -> KeyEvent -> IO (Maybe (AnimId -> AnimId)))
+  :: (Widget.Size -> IO (Maybe (Monoid.Endo AnimId)))
+  -> (Widget.Size -> KeyEvent -> IO (Maybe (Monoid.Endo AnimId)))
   -> (Widget.Size -> IO Anim.Frame)
   -> IO Anim.R -> IO a
 mainLoopAnim tickHandler eventHandler makeFrame getAnimationHalfLife = do
@@ -67,9 +70,9 @@ mainLoopAnim tickHandler eventHandler makeFrame getAnimationHalfLife = do
   let
     handleResult Nothing = return False
     handleResult (Just animIdMapping) = do
-      (modifyIORef frameStateVar . fmap)
-        ((first . const) 0 .
-         (second . second . Anim.mapIdentities) animIdMapping)
+      modifyIORef frameStateVar . fmap $
+        (_1 .~  0) .
+        (_2 . _2 %~ Anim.mapIdentities (Monoid.appEndo animIdMapping))
       return True
 
     nextFrameState curTime size Nothing = do
@@ -92,8 +95,8 @@ mainLoopAnim tickHandler eventHandler makeFrame getAnimationHalfLife = do
 
     makeImage forceRedraw size = do
       when forceRedraw .
-        modifyIORef frameStateVar .
-        fmap . first $ const 0
+        modifyIORef frameStateVar $
+        Lens.mapped . _1 .~ 0
       _ <- handleResult =<< tickHandler size
       curTime <- getCurrentTime
       writeIORef frameStateVar =<<
@@ -114,32 +117,31 @@ mainLoopAnim tickHandler eventHandler makeFrame getAnimationHalfLife = do
       handleResult =<< eventHandler size event
   mainLoopImage imgEventHandler makeImage
 
-compose :: [a -> a] -> a -> a
-compose = foldr (.) id
-
-mainLoopWidget :: (Widget.Size -> IO (Widget IO)) -> IO Anim.R -> IO a
-mainLoopWidget mkWidgetUnmemod getAnimationHalfLife = do
+mainLoopWidget :: IO Bool -> (Widget.Size -> IO (Widget IO)) -> IO Anim.R -> IO a
+mainLoopWidget widgetTickHandler mkWidgetUnmemod getAnimationHalfLife = do
   mkWidgetRef <- newIORef =<< memoIO mkWidgetUnmemod
   let
     newWidget = writeIORef mkWidgetRef =<< memoIO mkWidgetUnmemod
     getWidget size = ($ size) =<< readIORef mkWidgetRef
     tickHandler size = do
+      anyUpdate <- widgetTickHandler
+      when anyUpdate newWidget
       widget <- getWidget size
       tickResults <-
-        sequenceA $ widget ^. Widget.wEventMap . E.emTickHandlers
-      case tickResults of
-        [] -> return Nothing
-        _ -> do
-          newWidget
-          return . Just . compose . map (Lens.view Widget.eAnimIdMapping) $ tickResults
+        sequenceA (widget ^. Widget.wEventMap . E.emTickHandlers)
+      unless (null tickResults) newWidget
+      return $
+        case (tickResults, anyUpdate) of
+        ([], False) -> Nothing
+        _ -> Just . mconcat $ map (^. Widget.eAnimIdMapping) tickResults
     eventHandler size event = do
       widget <- getWidget size
       mAnimIdMapping <-
-        (traverse . fmap) (Lens.view Widget.eAnimIdMapping) .
+        (traverse . fmap) (^. Widget.eAnimIdMapping) .
         E.lookup event $ widget ^. Widget.wEventMap
       case mAnimIdMapping of
         Nothing -> return ()
         Just _ -> newWidget
       return mAnimIdMapping
-    mkFrame size = fmap (Lens.view Widget.wFrame) $ getWidget size
+    mkFrame size = (^. Widget.wFrame) <$> getWidget size
   mainLoopAnim tickHandler eventHandler mkFrame getAnimationHalfLife

@@ -12,14 +12,12 @@ module Graphics.UI.Bottle.Widgets.Box
   , hbox, vbox
   ) where
 
-import Control.Lens ((^.))
+import Control.Lens (Lens', (^.))
 import Data.Vector.Vector2 (Vector2(..))
 import Graphics.UI.Bottle.Rect (Rect(..))
 import Graphics.UI.Bottle.Widget (Widget, Size)
 import Graphics.UI.Bottle.Widgets.Grid (KGrid(..))
 import qualified Control.Lens as Lens
-import qualified Control.Lens.TH as LensTH
-import qualified Data.Vector.Vector2 as Vector2
 import qualified Graphics.UI.Bottle.Widgets.Grid as Grid
 
 type Cursor = Int
@@ -41,7 +39,7 @@ horizontal :: Orientation
 horizontal = Orientation
   { oToGridCursor = (`Vector2` 0)
   , oToGridChildren = (: [])
-  , oFromGridCursor = Lens.view Vector2.first
+  , oFromGridCursor = (^. Lens._1)
   , oFromGridChildren = eHead
   }
 
@@ -49,16 +47,16 @@ vertical :: Orientation
 vertical = Orientation
   { oToGridCursor = (0 `Vector2`)
   , oToGridChildren = map (: [])
-  , oFromGridCursor = Lens.view Vector2.second
+  , oFromGridCursor = (^. Lens._2)
   , oFromGridChildren = map eHead
   }
 
 type Element = Grid.Element
 
-elementRect :: Lens.SimpleLens (Element f) Rect
+elementRect :: Lens' (Element f) Rect
 elementRect = Grid.elementRect
 
-elementW :: Lens.SimpleLens (Element f) (Widget f)
+elementW :: Lens' (Element f) (Widget f)
 elementW = Grid.elementW
 
 data KBox key f = KBox
@@ -67,7 +65,7 @@ data KBox key f = KBox
   , _boxSize :: Size
   , _boxContent :: [(key, Element f)]
   }
-LensTH.makeLenses ''KBox
+Lens.makeLenses ''KBox
 
 type Box = KBox ()
 

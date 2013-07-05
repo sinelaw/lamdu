@@ -2,227 +2,185 @@
 {-# LANGUAGE FlexibleInstances, OverlappingInstances #-}
 module Utils where
 
-import Control.Applicative ((<$), (<$>))
-import Control.Arrow (first)
-import Control.Lens ((^.))
-import Control.Monad (join, void)
-import Control.Monad.Trans.State (State, runState, runStateT)
-import Data.Map (Map)
-import Data.Maybe (fromMaybe)
+import Control.Applicative ((<$), (<$>), (<*>))
+import Control.Lens.Operators
+import Control.Monad (void)
+import Data.Map (Map, (!))
+import Data.Monoid (mappend, mconcat)
 import Data.Store.Guid (Guid)
-import Lamdu.Data.IRef (DefI)
-import Lamdu.Data.Infer.Conflicts (InferredWithConflicts(..), inferWithConflicts)
-import qualified Data.Foldable as Foldable
-import qualified Data.List as List
+import Lamdu.Data.Expression (Expression(..), Kind(..))
+import Lamdu.Data.Expression.IRef (DefI)
+import Lamdu.Data.Expression.Utils (pureHole, pureIntegerType)
+import Lamdu.Data.ExampleDB (createBuiltins)
+import qualified Control.Lens as Lens
+import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Map as Map
 import qualified Data.Store.Guid as Guid
 import qualified Data.Store.IRef as IRef
-import qualified Lamdu.Data as Data
-import qualified Lamdu.Data.Infer as Infer
+import qualified Data.Store.Map as MapStore
+import qualified Data.Store.Transaction as Transaction
+import qualified Lamdu.Data.Anchors as Anchors
+import qualified Lamdu.Data.Definition as Definition
+import qualified Lamdu.Data.Expression as Expr
+import qualified Lamdu.Data.Expression.IRef as ExprIRef
+import qualified Lamdu.Data.Expression.Infer as Infer
+import qualified Lamdu.Data.Expression.Lens as ExprLens
+import qualified Lamdu.Data.Expression.Utils as ExprUtil
 
-data Invisible = Invisible
-instance Show Invisible where
-  show = const ""
-showStructure :: Show def => Data.ExpressionBody def a -> String
-showStructure = show . (Invisible <$)
+type PureExpr def = Expr.Expression def ()
+type PureExprDefI t = PureExpr (DefI t)
 
-instance Show def => Show (Data.Expression def ()) where
-  show (Data.Expression value ()) = show value
+(==>) :: k -> v -> Map k v
+(==>) = Map.singleton
 
-makeNamedLambda :: String -> expr -> expr -> Data.ExpressionBody def expr
-makeNamedLambda = Data.makeLambda . Guid.fromString
+data UnescapedStr = UnescapedStr String
+instance Show UnescapedStr where
+  show (UnescapedStr x) = x
 
-makeNamedPi :: String -> expr -> expr -> Data.ExpressionBody def expr
-makeNamedPi = Data.makePi . Guid.fromString
+showStructure :: Show def => Expr.Body def a -> String
+showStructure = show . (UnescapedStr "" <$)
 
-pureApply :: [Data.Expression def ()] -> Data.Expression def ()
-pureApply = foldl1 (fmap Data.pureExpression . Data.makeApply)
+instance Show def => Show (PureExpr def) where
+  show (Expr.Expression value ()) = show value
+
+namedLambda :: String -> expr -> expr -> Expr.Body def expr
+namedLambda = ExprUtil.makeLambda . Guid.fromString
+
+namedPi :: String -> expr -> expr -> Expr.Body def expr
+namedPi = ExprUtil.makePi . Guid.fromString
+
+pureApply :: [PureExpr def] -> PureExpr def
+pureApply = foldl1 ExprUtil.pureApply
+
+bodySet :: Expr.Body def expr
+bodySet = ExprLens.bodyType # ()
+
+bodyHole :: Expr.Body def expr
+bodyHole = ExprLens.bodyHole # ()
+
+bodyIntegerType :: Expr.Body def expr
+bodyIntegerType = ExprLens.bodyIntegerType # ()
+
+-- 1 dependent param
+pureApplyPoly1 ::
+  String ->
+  [ExprIRef.Expression t ()] ->
+  ExprIRef.Expression t ()
+pureApplyPoly1 name xs = pureApply $ pureGetDef name : pureHole : xs
 
 pureLambda ::
-  String -> Data.Expression def () ->
-  Data.Expression def () ->
-  Data.Expression def ()
-pureLambda name x y = Data.pureExpression $ makeNamedLambda name x y
+  String -> PureExpr def ->
+  PureExpr def ->
+  PureExpr def
+pureLambda name x y = ExprUtil.pureExpression $ namedLambda name x y
 
 purePi ::
-  String -> Data.Expression def () ->
-  Data.Expression def () ->
-  Data.Expression def ()
-purePi name x y = Data.pureExpression $ makeNamedPi name x y
+  String -> PureExpr def ->
+  PureExpr def ->
+  PureExpr def
+purePi name x y = ExprUtil.pureExpression $ namedPi name x y
 
-hole :: Data.Expression def ()
-hole = Data.pureHole
+pureLiteralInt :: Lens.Prism' (PureExpr def) Integer
+pureLiteralInt = ExprLens.pureExpr . ExprLens.bodyLiteralInteger
 
-setType :: Data.Expression def ()
-setType = Data.pureSet
-
-intType :: Data.Expression def ()
-intType = Data.pureIntegerType
-
-literalInt :: Integer -> Data.Expression def ()
-literalInt i = Data.pureExpression $ Data.makeLiteralInteger i
-
-pureGetDef :: String -> Data.Expression (DefI t) ()
+pureGetDef :: String -> PureExprDefI t
 pureGetDef name =
-  Data.pureExpression . Data.makeDefinitionRef . IRef.unsafeFromGuid $
+  ExprLens.pureExpr . ExprLens.bodyDefinitionRef #
+  IRef.unsafeFromGuid (Guid.fromString name)
+
+pureGetParam :: String -> PureExpr def
+pureGetParam name =
+  ExprLens.pureExpr . ExprLens.bodyParameterRef #
   Guid.fromString name
 
-pureGetParam :: String -> Data.Expression def ()
-pureGetParam name =
-  Data.pureExpression . Data.makeParameterRef $
-  Guid.fromString name
+pureGetRecursiveDefI :: PureExprDefI t
+pureGetRecursiveDefI =
+  ExprLens.pureExpr . ExprLens.bodyDefinitionRef # recursiveDefI
+
+pureParameterRef :: String -> PureExpr def
+pureParameterRef str =
+  ExprLens.pureExpr . ExprLens.bodyParameterRef # Guid.fromString str
 
 ansiRed :: String
 ansiRed = "\ESC[31m"
+ansiYellow :: String
+ansiYellow = "\ESC[1;33m"
 ansiReset :: String
 ansiReset = "\ESC[0m"
+ansiAround :: String -> String -> String
+ansiAround prefix x = prefix ++ x ++ ansiReset
 
-showExpressionWithConflicts ::
-  Show def => Data.Expression def (InferredWithConflicts def) -> String
-showExpressionWithConflicts =
-  List.intercalate "\n" . go
-  where
-    go inferredExpr =
-      [ "Expr:" ++ showStructure expr
-      , "  IVal:  " ++ show val
-      ] ++ map ((("    " ++ ansiRed ++ "Conflict: ") ++) . (++ ansiReset) . show) vErrors ++
-      [ "  IType: " ++ show typ
-      ] ++ map ((("    " ++ ansiRed ++ "Conflict: ") ++) . (++ ansiReset) . show) tErrors ++
-      (map ("  " ++) . Foldable.concat . fmap go) expr
-      where
-        expr = inferredExpr ^. Data.eValue
-        val = Infer.iValue inferred
-        typ = Infer.iType inferred
-        InferredWithConflicts inferred tErrors vErrors =
-          inferredExpr ^. Data.ePayload
-
-definitionTypes :: Map Guid (Data.Expression (DefI t) ())
+definitionTypes :: Map Guid (PureExprDefI t)
 definitionTypes =
-  Map.fromList $ map (first Guid.fromString)
-  [ ("Bool", setType)
-  , ("List", purePi "list" setType setType)
-  , ("IntToBoolFunc", purePi "intToBool" intType (pureGetDef "Bool"))
-  , ("*", intToIntToInt)
-  , ("-", intToIntToInt)
-  , ( "if"
-    , purePi "a" setType .
-      purePi "ifboolarg" (pureGetDef "Bool") .
-      purePi "iftarg" (pureGetParam "a") .
-      purePi "iffarg" (pureGetParam "a") $
-      pureGetParam "a"
-    )
-  , ( "=="
-    , purePi "==0" intType .
-      purePi "==1" intType $
-      pureGetDef "Bool"
-    )
-  , ( "id"
-    , purePi "a" setType $
-      purePi "idGivenType" (pureGetParam "a") (pureGetParam "a")
-    )
-  , ( ":"
-    , purePi "a" setType .
-      purePi "consx" (pureGetParam "a") .
-      join (purePi "consxs") $
-      pureApply [pureGetDef "List", pureGetParam "a"]
-    )
+  exampleDBDefs `mappend` extras
+  where
+    g = Guid.fromString
+    extras =
+      mconcat
+      [ g "IntToBoolFunc" ==> purePi "intToBool" pureIntegerType (pureGetDef "Bool")
+      ]
+    exampleDBDefs =
+      fst . MapStore.runEmpty . Transaction.run MapStore.mapStore $ do
+        (_, defIs) <- createBuiltins
+        Lens.mapMOf (Lens.traversed . ExprLens.exprDef) reIRef
+          =<< Map.fromList <$> mapM readDef defIs
+
+    reIRef = fmap IRef.unsafeFromGuid . guidNameOf
+    guidNameOf =
+      fmap Guid.fromString . Transaction.getP . Anchors.assocNameRef . IRef.guid
+    readDef defI =
+      (,)
+      <$> guidNameOf defI
+      <*>
+      (fmap void . ExprIRef.readExpression . (^. Definition.defType) =<<
+       Transaction.readIRef defI)
+
+recursiveDefI :: DefI t
+recursiveDefI = IRef.unsafeFromGuid $ Guid.fromString "Definition"
+
+innerMostPi :: Expression def a -> Expression def a
+innerMostPi =
+  last . pis
+  where
+    pis expr =
+      case expr ^? ExprLens.exprKindedLam KType . Lens._3 of
+      Just resultType -> expr : pis resultType
+      _ -> []
+
+piTags :: Lens.Traversal' (Expression def a) Guid
+piTags =
+  ExprLens.exprKindedLam KType . Lens._2 .
+  ExprLens.exprKindedRecordFields KType .
+  Lens.traversed . Lens._1 . ExprLens.exprTag
+
+defParamTags :: String -> [Guid]
+defParamTags defName =
+  innerMostPi (definitionTypes ! Guid.fromString defName) ^.. piTags
+
+simplifyDef :: ExprIRef.Expression t a -> Expression UnescapedStr a
+simplifyDef =
+  ExprLens.exprDef %~ defIStr
+  where
+    defIStr = UnescapedStr . BS8.unpack . BS8.takeWhile (/= '\0') . Guid.bs . IRef.guid
+
+showRestricted :: Expr.Expression def Infer.IsRestrictedPoly -> Expr.Expression def UnescapedStr
+showRestricted = fmap restrictedStr
+  where
+    restrictedStr Infer.UnrestrictedPoly = UnescapedStr ""
+    restrictedStr Infer.RestrictedPoly = UnescapedStr $ ansiAround ansiYellow "R"
+
+canonizeDebug :: Expression def a -> Expression def a
+canonizeDebug = ExprUtil.randomizeParamIdsG id ExprUtil.debugNameGen Map.empty (\_ _ -> id)
+
+showInferred :: ExprIRef.Expression t Infer.IsRestrictedPoly -> String
+showInferred =
+  show . showRestricted . simplifyDef . canonizeDebug
+
+showInferredValType :: Expression def (Infer.Inferred (DefI t)) -> String
+showInferredValType expr =
+  unlines
+  [ "Inferred val:  " ++ f Infer.iValue
+  , "Inferred type: " ++ f Infer.iType
   ]
   where
-    intToIntToInt = purePi "iii0" intType $ purePi "iii1" intType intType
-
-doInferM ::
-  Infer.InferNode (DefI t) -> Data.Expression (DefI t) a ->
-  State (Infer.Context (DefI t)) (Data.Expression (DefI t) (Infer.Inferred (DefI t), a))
-doInferM inferNode expr = do
-  (success, exprWC) <-
-    inferWithConflicts (doLoad expr) inferNode
-  return $
-    if success
-    then (fmap . first) iwcInferred exprWC
-    else
-      error $ unlines
-      [ "Result with conflicts:"
-      -- TODO: Extract the real root (in case of resumption) to show
-      , showExpressionWithConflicts $ fst <$> exprWC
-      ]
-
-doInferM_ ::
-  Infer.InferNode (DefI t) -> Data.Expression (DefI t) a ->
-  State (Infer.Context (DefI t)) (Data.Expression (DefI t) (Infer.Inferred (DefI t)))
-doInferM_ = (fmap . fmap . fmap . fmap) fst doInferM
-
-doLoad :: Data.Expression (DefI t) a -> Infer.Loaded (DefI t) a
-doLoad expr =
-  case Infer.load loader (Just defI) expr of
-  Left err -> error err
-  Right x -> x
-
-loader :: Infer.Loader (DefI t) (Either String)
-loader =
-  Infer.Loader load
-  where
-    load key =
-      case Map.lookup (IRef.guid key) definitionTypes of
-      Nothing -> Left ("Could not find" ++ show key)
-      Just x -> Right x
-
-defI :: DefI t
-defI = IRef.unsafeFromGuid $ Guid.fromString "Definition"
-
-doInfer ::
-  Data.Expression (DefI t) a ->
-  ( Data.Expression (DefI t) (Infer.Inferred (DefI t), a)
-  , Infer.Context (DefI t)
-  )
-doInfer =
-  (`runState` ctx) . doInferM node
-  where
-    (ctx, node) = Infer.initial $ Just defI
-
-doInfer_ ::
-  Data.Expression (DefI t) a ->
-  (Data.Expression (DefI t) (Infer.Inferred (DefI t)), Infer.Context (DefI t))
-doInfer_ = (first . fmap) fst . doInfer
-
-factorialExpr :: Data.Expression (DefI t) ()
-factorialExpr =
-  pureLambda "x" Data.pureHole $
-  pureApply
-  [ pureGetDef "if"
-  , Data.pureHole
-  , pureApply [pureGetDef "==", pureGetParam "x", literalInt 0]
-  , literalInt 1
-  , pureApply
-    [ pureGetDef "*"
-    , pureGetParam "x"
-    , pureApply
-      [ Data.pureExpression $ Data.makeDefinitionRef defI
-      , pureApply [pureGetDef "-", pureGetParam "x", literalInt 1]
-      ]
-    ]
-  ]
-
-inferMaybe ::
-  Data.Expression (DefI t) a ->
-  Maybe (Data.Expression (DefI t) (Infer.Inferred (DefI t), a), Infer.Context (DefI t))
-inferMaybe expr =
-  (`runStateT` ctx) $
-  Infer.inferLoaded (Infer.InferActions (const Nothing)) loaded node
-  where
-    (ctx, node) = Infer.initial (Just defI)
-    loaded = doLoad expr
-
-inferMaybe_ ::
-  Data.Expression (DefI t) b ->
-  Maybe (Data.Expression (DefI t) (Infer.Inferred (DefI t)), Infer.Context (DefI t))
-inferMaybe_ = (fmap . first . fmap) fst . inferMaybe
-
-factorial ::
-  Int ->
-  ( Data.Expression (DefI t) (Infer.Inferred (DefI t))
-  , Infer.Context (DefI t)
-  )
-factorial gen =
-  fromMaybe (error "Conflicts in factorial infer") .
-  inferMaybe_ . void $
-  fmap (const gen) factorialExpr
+    f t = expr ^. Expr.ePayload . Lens.to (showInferred . t)

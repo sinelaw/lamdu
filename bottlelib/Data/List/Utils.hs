@@ -7,10 +7,11 @@ module Data.List.Utils
   , index
   , insertAt
   , removeAt
-  , atPred
   , pairList
   , theOne
   , nonEmptyAll
+  , match
+  , isLengthAtLeast
   ) where
 
 import Data.Function (on)
@@ -47,15 +48,6 @@ removeAt n xs = take n xs ++ drop (n+1) xs
 insertAt :: Int -> a -> [a] -> [a]
 insertAt n x xs = take n xs ++ x : drop n xs
 
-atPred
-  :: (key -> Bool)
-  -> (a -> a)
-  -> [(key, a)]
-  -> [(key, a)]
-atPred p f xs =
-  [ (key, if p key then f x else x)
-  | (key, x) <- xs ]
-
 pairList :: (a, a) -> [a]
 pairList (x, y) = [x, y]
 
@@ -63,6 +55,17 @@ theOne :: [a] -> Maybe a
 theOne [x] = Just x
 theOne _ = Nothing
 
+isLengthAtLeast :: Int -> [a] -> Bool
+isLengthAtLeast l _ | l <= 0 = True
+isLengthAtLeast _ [] = False
+isLengthAtLeast l (_:xs) = isLengthAtLeast (l-1) xs
+
 nonEmptyAll :: (a -> Bool) -> [a] -> Bool
 nonEmptyAll _ [] = False
 nonEmptyAll f xs = all f xs
+
+match :: (a -> b -> c) -> [a] -> [b] -> Maybe [c]
+match f (x:xs) (y:ys) =
+  fmap (f x y :) $ match f xs ys
+match _ [] [] = Just []
+match _ _ _ = Nothing

@@ -11,8 +11,8 @@ module Graphics.UI.Bottle.Widgets.TextEdit(
   sTextViewStyle
   ) where
 
-import Control.Arrow (first)
-import Control.Lens ((%~), (^.))
+import Control.Lens.Operators
+import Control.Lens.Tuple
 import Data.Char (isSpace)
 import Data.List (genericLength, minimumBy)
 import Data.List.Split (splitWhen)
@@ -25,12 +25,11 @@ import Graphics.DrawingCombinators.Utils (square, textHeight)
 import Graphics.UI.Bottle.Rect (Rect(..))
 import Graphics.UI.Bottle.Widget (Widget(..))
 import qualified Control.Lens as Lens
-import qualified Control.Lens.TH as LensTH
 import qualified Data.Binary.Utils as BinUtils
 import qualified Data.ByteString.Char8 as SBS8
 import qualified Data.Map as Map
+import qualified Data.Monoid as Monoid
 import qualified Data.Set as Set
-import qualified Data.Vector.Vector2 as Vector2
 import qualified Graphics.DrawingCombinators as Draw
 import qualified Graphics.UI.Bottle.Animation as Anim
 import qualified Graphics.UI.Bottle.Direction as Direction
@@ -52,7 +51,7 @@ data Style = Style
   , _sEmptyFocusedString :: String
   , _sTextViewStyle :: TextView.Style
   }
-LensTH.makeLenses ''Style
+Lens.makeLenses ''Style
 
 defaultCursorColor :: Draw.Color
 defaultCursorColor = Draw.Color 0 1 0 1
@@ -78,8 +77,9 @@ makeTextEditCursor myId = Widget.joinId myId . (:[]) . BinUtils.encodeS
 
 rightSideOfRect :: Rect -> Rect
 rightSideOfRect rect =
-  Lens.set Rect.left (rect ^. Rect.right) .
-  Lens.set Rect.width 0 $ rect
+  rect
+  & Rect.left .~ rect ^. Rect.right
+  & Rect.width .~ 0
 
 cursorRects :: Style -> String -> [Rect]
 cursorRects style str =
@@ -99,8 +99,8 @@ cursorRects style str =
 makeUnfocused :: Style -> String -> Widget.Id -> Widget ((,) String)
 makeUnfocused style str myId =
   makeFocusable style str myId .
-  (Widget.wSize . Vector2.first %~ (+ cursorWidth)) .
-  Lens.over Widget.wFrame (cursorTranslate style) .
+  (Widget.wSize . Lens._1 +~ cursorWidth) .
+  (Widget.wFrame %~ cursorTranslate style) .
   TextView.makeWidget (style ^. sTextViewStyle) displayStr $
   Widget.toAnimId myId
   where
@@ -111,7 +111,7 @@ makeFocusable ::
   Style -> String -> Widget.Id ->
   Widget ((,) String) -> Widget ((,) String)
 makeFocusable style str myId =
-  Lens.set Widget.wMaybeEnter $ Just mEnter
+  Widget.wMaybeEnter .~ Just mEnter
   where
     minimumOn = minimumBy . comparing
     rectToCursor fromRect =
@@ -140,8 +140,8 @@ eventResult ::
 eventResult myId strWithIds newText newCursor =
   (map snd newText,
     Widget.EventResult {
-      Widget._eCursor = Just $ makeTextEditCursor myId newCursor,
-      Widget._eAnimIdMapping = mapping
+      Widget._eCursor = Monoid.Last . Just $ makeTextEditCursor myId newCursor,
+      Widget._eAnimIdMapping = Monoid.Endo mapping
     })
   where
     myAnimId = Widget.toAnimId myId
@@ -190,7 +190,7 @@ makeFocused cursor style str myId =
 
 textViewDraw ::
   Style -> String -> (Anim.AnimId -> Anim.Frame, Widget.Size)
-textViewDraw = TextView.drawTextAsSingleLetters . Lens.view sTextViewStyle
+textViewDraw = TextView.drawTextAsSingleLetters . (^. sTextViewStyle)
 
 mkCursorRect :: Style -> Int -> String -> Rect
 mkCursorRect style cursor str = Rect cursorPos cursorSize
@@ -200,8 +200,9 @@ mkCursorRect style cursor str = Rect cursorPos cursorSize
     cursorPos = Vector2 cursorPosX cursorPosY
     cursorSize = Vector2 (style ^. sCursorWidth) lineHeight
     cursorPosX =
-      Lens.view Vector2.first . snd . textViewDraw style $ last beforeCursorLines
-    cursorPosY = (lineHeight *) . subtract 1 $ genericLength beforeCursorLines
+      textViewDraw style (last beforeCursorLines) ^.
+      Lens._2 . Lens._1
+    cursorPosY = lineHeight * (genericLength beforeCursorLines - 1)
 
 eventMap ::
   Int -> String -> String -> Widget.Id ->
@@ -285,7 +286,7 @@ eventMap cursor str displayStr myId =
       backDelete (length curLineBefore)
     | not . null $ curLineBefore ],
 
-    [ E.filterChars (`notElem` " \n") .
+    [ E.filterSChars (curry (`notElem` E.anyShiftedChars " \n")) .
       E.simpleChars "Character" (insertDoc ["character"]) $
       insert . (: [])
     ],
@@ -336,7 +337,7 @@ eventMap cursor str displayStr myId =
     endKeys = [specialKey E.KeyEnd, ctrlCharKey 'E']
     textLength = length str
     lineCount = length $ splitWhen (== '\n') displayStr
-    strWithIds = map (first Just) $ enumerate str
+    strWithIds = Lens.mapped . _1 %~ Just $ enumerate str
     (before, after) = splitAt cursor strWithIds
 
 make :: Style -> Widget.Id -> String -> Widget.Id -> Widget ((,) String)

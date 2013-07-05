@@ -2,8 +2,8 @@
 module Graphics.UI.Bottle.Widgets.FlyNav(make, State, initState) where
 
 import Control.Applicative (Applicative(..), liftA2, (*>))
-import Control.Arrow (second)
-import Control.Lens ((^.))
+import Control.Lens (Lens')
+import Control.Lens.Operators
 import Control.Monad (void)
 import Data.ByteString.Char8 () -- instance IsString ByteString
 import Data.Monoid (Monoid(..))
@@ -13,7 +13,6 @@ import Graphics.UI.Bottle.Rect (Rect(..))
 import Graphics.UI.Bottle.Widget (Widget, Size)
 import Graphics.UI.Bottle.Widgets.StdKeys (DirKeys(..), stdDirKeys)
 import qualified Control.Lens as Lens
-import qualified Control.Lens.TH as LensTH
 import qualified Graphics.DrawingCombinators as Draw
 import qualified Graphics.UI.Bottle.Animation as Anim
 import qualified Graphics.UI.Bottle.Direction as Direction
@@ -26,7 +25,7 @@ data Movement = Movement
   , __mModKey :: EventMap.ModKey
   , _mDir :: Vector2 Widget.R
   }
-LensTH.makeLenses ''Movement
+Lens.makeLenses ''Movement
 
 data ActiveState = ActiveState
   { _asPos :: Vector2 Widget.R
@@ -50,7 +49,7 @@ initState :: State
 initState = Nothing
 
 withEmptyResult :: Functor f => f () -> f Widget.EventResult
-withEmptyResult = (fmap . const) Widget.emptyEventResult
+withEmptyResult = (fmap . const) mempty
 
 mkTickHandler :: Functor f => f () -> Widget.EventHandlers f
 mkTickHandler = EventMap.tickHandler . withEmptyResult
@@ -120,7 +119,7 @@ addMovement
   -> (Maybe ActiveState -> f ())
   -> Widget.EventHandlers f
 addMovement name keys dir pos movements setState
-  | name `elem` map (Lens.view mName) movements = mempty
+  | name `elem` map (^. mName) movements = mempty
   | otherwise =
     mconcat
     [ mkKeyMap EventMap.Press modKey (EventMap.Doc ["Navigation", "FlyNav", name]) .
@@ -129,35 +128,38 @@ addMovement name keys dir pos movements setState
     , let modKey = EventMap.ModKey modifier key
     ]
 
+-- separate out a single element each time
 zipped :: [a] -> [(a, [a])]
 zipped [] = []
-zipped (x:xs) = (x, xs) : (map . second) (x:) (zipped xs)
+zipped (x:xs) =
+  (x, xs) :
+  (Lens.mapped . Lens._2 %~ (x:)) (zipped xs)
 
-focalCenter :: Lens.SimpleLens (Widget f) (Vector2 Widget.R)
+focalCenter :: Lens' (Widget f) (Vector2 Widget.R)
 focalCenter = Widget.wFocalArea . Rect.center
 
 make
   :: Applicative f => AnimId -> State -> (State -> f ())
   -> Widget f -> Widget f
 make _ Nothing setState w =
-  (Lens.over Widget.wEventMap . flip mappend)
-  (addMovements (w ^. focalCenter) [] setState)
-  w
+  w & Widget.wEventMap <>~ addMovements (w ^. focalCenter) [] setState
 make animId (Just (ActiveState pos movements)) setState w =
-  (Lens.over Widget.wFrame . mappend) frame .
-  Lens.set Widget.wEventMap eventMap $ w
+  w
+  & Widget.wFrame %~ mappend frame
+  & Widget.wEventMap .~ eventMap
   where
-    delta = sum $ map (Lens.view mDir) movements
+    delta = sum $ map (^. mDir) movements
     highlight =
       maybe mempty
-      (highlightRect (animId ++ ["highlight"]) . Lens.view Widget.enterResultRect)
+      (highlightRect (animId ++ ["highlight"]) . (^. Widget.enterResultRect))
       mEnteredChild
     frame = target (animId ++ ["target"]) pos `mappend` highlight
     mEnteredChild = fmap ($ targetPos) $ w ^. Widget.wMaybeEnter
     targetPos = Direction.Point pos
     nextState =
-      ActiveState (cap (pos + delta*speed) (w ^. Widget.wSize))
-      ((map . Lens.over mDir) (* accel) movements)
+      ActiveState
+      (cap (pos + delta*speed) (w ^. Widget.wSize)) $
+      movements & Lens.mapped . mDir *~ accel
     eventMap = mconcat $
       (mkTickHandler . setState . Just) nextState :
       addMovements pos movements setState :
@@ -181,5 +183,5 @@ make animId (Just (ActiveState pos movements)) setState w =
         setState Nothing *>
         -- TODO: Just cancel FlyNav in any case if the MaybeEnter is
         -- Nothing...
-        maybe (pure Widget.emptyEventResult) (Lens.view Widget.enterResultEvent)
+        maybe (pure mempty) (^. Widget.enterResultEvent)
           mEnteredChild

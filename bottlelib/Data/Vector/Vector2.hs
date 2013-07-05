@@ -1,20 +1,20 @@
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TemplateHaskell, MultiParamTypeClasses, FlexibleInstances, TypeFamilies #-}
 module Data.Vector.Vector2
     ( Vector2(Vector2)
     , (***),both,zip
-    , first,second,swap
+    , swap
     , curry,uncurry,sqrNorm
     )
 where
 
-import Control.Applicative (Applicative(..), liftA2)
+import Control.Applicative (Applicative(..), (<$>), liftA2)
 import Control.Monad (join)
 import Data.Binary (Binary(..))
 import Data.Derive.Binary (makeBinary)
 import Data.DeriveTH (derive)
 import Data.Monoid
 import Prelude hiding (curry, uncurry, zip)
-import qualified Control.Lens.TH as LensTH
+import qualified Control.Lens as Lens
 
 data Vector2 a = Vector2
   { _first :: !a
@@ -24,8 +24,12 @@ data Vector2 a = Vector2
   -- (Vectors aren't ordinals!). Useful to have in a binary search
   -- tree though.
   deriving (Eq, Ord, Show, Read)
-LensTH.makeLenses ''Vector2
 derive makeBinary ''Vector2
+
+instance a ~ b => Lens.Field1 (Vector2 a) (Vector2 b) a b where
+  _1 f (Vector2 x y) = (`Vector2` y) <$> Lens.indexed f (0 :: Int) x
+instance a ~ b => Lens.Field2 (Vector2 a) (Vector2 b) a b where
+  _2 f (Vector2 x y) = Vector2 x <$> Lens.indexed f (1 :: Int) y
 
 -- Taken almost verbatim from QuickCheck's instance for (a, b)
 -- instance Arbitrary a => Arbitrary (Vector2 a) where

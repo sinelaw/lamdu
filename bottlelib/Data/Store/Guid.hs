@@ -1,16 +1,17 @@
-{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE DeriveDataTypeable, GeneralizedNewtypeDeriving #-}
 module Data.Store.Guid
-    (Guid, make, bs, length, new, combine, augment, fromString, asHex)
-where
+  (Guid, make, bs, length, new, combine, augment, fromString, asHex) where
 
-import Control.Arrow (first)
+import Control.DeepSeq (NFData(..))
+import Control.Lens ((%~), _1)
 import Control.Monad (guard)
 import Data.Binary (Binary(..))
 import Data.Binary.Get (getByteString)
 import Data.Binary.Put (putByteString)
 import Data.Binary.Utils (encodeS)
+import Data.ByteString.NFData ()
 import Data.ByteString.Utils (randomBS, xorBS)
-import Data.Hashable (hash)
+import Data.Hashable (Hashable, hashWithSalt)
 import Data.Maybe (fromMaybe)
 import Data.Monoid (mappend)
 import Data.Typeable (Typeable)
@@ -22,7 +23,7 @@ import qualified Data.ByteString.UTF8 as UTF8
 import qualified Data.Char as Char
 
 newtype Guid = Guid { bs :: SBS.ByteString }
-  deriving (Eq, Ord, Read, Typeable)
+  deriving (Eq, Ord, Read, Typeable, NFData, Hashable)
 
 instance Show Guid where
   show g =
@@ -52,7 +53,7 @@ asHex = encodeHex . bs
 
 instance Random Guid where
   randomR = error "randomR: you nuts?"
-  random = first (Guid . SBS.pack . take 16 . randoms) . split
+  random = (_1 %~ Guid . SBS.pack . take 16 . randoms) . split
 
 length :: Int
 length = 16
@@ -80,7 +81,7 @@ combine :: Guid -> Guid -> Guid
 combine x y =
   inGuid (rbs x . rbs y) xorGuid
   where
-    rbs = xorBS . encodeS . hash . bs
+    rbs = xorBS . encodeS . hashWithSalt 0 . bs
     xorGuid = inGuid2 xorBS x y
 
 augment :: String -> Guid -> Guid

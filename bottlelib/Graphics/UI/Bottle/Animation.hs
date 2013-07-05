@@ -1,7 +1,7 @@
 {-# LANGUAGE TemplateHaskell, FlexibleInstances, MultiParamTypeClasses #-}
 
 module Graphics.UI.Bottle.Animation
-  ( R, AnimId, Size, Layer
+  ( R, Size, Layer
   , PositionedImage(..), piImage, piRect
   , Frame(..), fSubImages, onImages
   , draw, nextFrame, mapIdentities
@@ -11,11 +11,11 @@ module Graphics.UI.Bottle.Animation
   , simpleFrame, simpleFrameDownscale
   , joinId, subId
   , weaker, stronger
+  , module Graphics.UI.Bottle.Animation.Id
   ) where
 
 import Control.Applicative(Applicative(..), liftA2)
-import Control.Arrow(first, second)
-import Control.Lens ((^.))
+import Control.Lens.Operators
 import Control.Monad(void)
 import Data.List(isPrefixOf)
 import Data.List.Utils(groupOn, sortOn)
@@ -24,10 +24,9 @@ import Data.Maybe(isJust)
 import Data.Monoid(Monoid(..))
 import Data.Vector.Vector2 (Vector2(..))
 import Graphics.DrawingCombinators(R, (%%))
+import Graphics.UI.Bottle.Animation.Id (AnimId)
 import Graphics.UI.Bottle.Rect(Rect(Rect))
 import qualified Control.Lens as Lens
-import qualified Control.Lens.TH as LensTH
-import qualified Data.ByteString as SBS
 import qualified Data.List as List
 import qualified Data.Map as Map
 import qualified Data.Vector.Vector2 as Vector2
@@ -35,7 +34,6 @@ import qualified Graphics.DrawingCombinators as Draw
 import qualified Graphics.DrawingCombinators.Utils as DrawUtils
 import qualified Graphics.UI.Bottle.Rect as Rect
 
-type AnimId = [SBS.ByteString]
 type Layer = Int
 type Size = Vector2 R
 
@@ -43,12 +41,12 @@ data PositionedImage = PositionedImage {
   _piImage :: Draw.Image (), -- Image always occupies (0,0)..(1,1), the translation/scaling occurs when drawing
   _piRect :: Rect
   }
-LensTH.makeLenses ''PositionedImage
+Lens.makeLenses ''PositionedImage
 
 newtype Frame = Frame {
   _fSubImages :: Map AnimId [(Layer, PositionedImage)]
   }
-LensTH.makeLenses ''Frame
+Lens.makeLenses ''Frame
 
 joinId :: AnimId -> AnimId -> AnimId
 joinId = (++)
@@ -95,7 +93,10 @@ red :: Draw.Color
 red = Draw.Color 1 0 0 1
 
 draw :: Frame -> Draw.Image ()
-draw = mconcat . map (posImages . map snd) . sortOn (fst . head) . Map.elems . Lens.view fSubImages
+draw =
+  mconcat . map (posImages . map snd) .
+  sortOn (fst . head) . Map.elems .
+  (^. fSubImages)
   where
     putXOn (PositionedImage img r) = PositionedImage (mappend (Draw.tint red unitX) img) r
     posImages [x] = posImage x
@@ -163,10 +164,10 @@ isVirtuallySame (Frame a) (Frame b) =
       liftA2 max
         (fmap abs (ra ^. Rect.topLeft - rb ^. Rect.topLeft))
         (fmap abs (ra ^. Rect.bottomRight -  rb ^. Rect.bottomRight))
-    rectMap = Map.map (Lens.view piRect . snd . head)
+    rectMap = Map.map (^?! Lens.traversed . Lens._2 . piRect)
 
 mapIdentities :: (AnimId -> AnimId) -> Frame -> Frame
-mapIdentities = Lens.over fSubImages . Map.mapKeys
+mapIdentities f = fSubImages %~ Map.mapKeys f
 
 nextFrame :: R -> Frame -> Frame -> Maybe Frame
 nextFrame movement dest cur
@@ -216,16 +217,20 @@ backgroundColor animId layer color size =
   flip mappend . onDepth (+layer) . scale size .
   onImages (Draw.tint color) $ unitSquare animId
 
+eachFrame :: Lens.Traversal' Frame (Layer, PositionedImage)
+eachFrame = fSubImages . Lens.traversed . Lens.traversed
+
+images :: Lens.Traversal' Frame PositionedImage
+images = eachFrame . Lens._2
+
 translate :: Vector2 R -> Frame -> Frame
-translate pos =
-  Lens.over fSubImages $ (Map.map . map . second) moveImage
+translate pos = images %~ moveImage
   where
     moveImage (PositionedImage img (Rect tl size)) =
       PositionedImage img (Rect (tl + pos) size)
 
 scale :: Vector2 R -> Frame -> Frame
-scale factor =
-  Lens.over fSubImages $ (Map.map . map . second) scaleImage
+scale factor = images %~ scaleImage
   where
     scaleImage (PositionedImage img (Rect tl size)) =
       PositionedImage img (Rect (tl * factor) (size * factor))
@@ -237,7 +242,8 @@ unitIntoRect r =
   scale (r ^. Rect.size)
 
 onDepth :: (Int -> Int) -> Frame -> Frame
-onDepth = Lens.over fSubImages . Map.map . map . first
+onDepth = (eachFrame . Lens._1 %~)
 
+-- TODO: Export a lens?
 onImages :: (Draw.Image () -> Draw.Image ()) -> Frame -> Frame
-onImages = Lens.over fSubImages . Map.map . map . second . Lens.over piImage
+onImages = (images . piImage %~)
